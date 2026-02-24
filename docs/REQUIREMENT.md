@@ -2,7 +2,7 @@
 - Lakshmanan A (Developer)
 - Abhishek Satish Raut (Developer)
 - Nagulan M (Tester)
-- Vignesh Devendran (Product Owner)
+- Vignesh Devendran (Product Owner & Developer)
 
 # Software Requirements Specification 
 ## 1. Introduction
@@ -35,7 +35,7 @@ When a sighted / VI user remotely controls a machine running NVDA (e.g., via Tea
 - [NVDA Add-on Development Guide](https://github.com/nvdaaddons/DevGuide/wiki/NVDA-Add-on-Development-Guide)
 
 ### 1.5 Overview
-This SRS is organized into five main sections. Section 2 provides a high-level product perspective and functions. Section 3 details specific functional, performance, and non-functional requirements, including open source specifics like contribution guidelines. Section 4 outlines milestones, testing, and supporting information. Section 5 captures approval from Vision-Aid Hack for inclusion representatives.
+This SRS is organized into five main sections. Section 2 provides a high-level product perspective and functions. Section 3 details specific functional, performance, and non-functional requirements, including open source specifics like contribution guidelines. Section 4 outlines milestones, testing, and supporting information. Section 5 captures approval from representatives.
 
 ## 2. Overall Description
 ### 2.1 Product Perspective
@@ -135,4 +135,4 @@ Add-ons hook into NVDA's Python-based architecture using modules like globalPlug
 - Unit: unittest 
 
 ## 5. Approvals
-- Vision-Aid India Rep: ________________ Date: ____
+- Rep: ________________ Date: ____
