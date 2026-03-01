@@ -10,7 +10,7 @@
 ## Placing the Code
 
 - Create subfolders like `appModules` or `globalPlugins` inside scratchpad if those directories not available.
-- Copy the `CustomRemoteGesture` directory present in `addon/globalPlugins/` from our repo to `../scratchpad/gobalPlugins/` directory.
+- Copy the `CustomRemoteGesture` directory present in `addon/globalPlugins/` from our repo to `../scratchpad/globalPlugins/` directory.
 
 ## Testing Steps
 
@@ -21,4 +21,3 @@
 	- Keyboard Capture: Navigate to the element using keyboard, then press NVDA + Shift + c to capture element
 	- Mouse Capture: Hover over the element using mouse then press NVDA + Shift + m to capture element
 	- Session Type: To know the type of either Remote/local session press NVDA + Shift + S;
-- Verify functionality: e.g., if code beeps on focus change, tab through controls and listen for beeps.
