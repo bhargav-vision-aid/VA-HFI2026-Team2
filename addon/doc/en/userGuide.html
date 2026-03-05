@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Remote Element Marker - User Guide</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.5;
+      margin: 24px;
+      color: #111;
+    }
+    h1, h2, h3 {
+      margin-top: 1.2em;
+    }
+    code {
+      background: #f4f4f4;
+      padding: 0 4px;
+    }
+    .note {
+      border-left: 4px solid #888;
+      padding: 8px 12px;
+      background: #f9f9f9;
+    }
+  </style>
+</head>
+<body>
+  <h1>Remote Element Marker - User Guide</h1>
+
+  <h2>Overview</h2>
+  <p>
+    Remote Element Marker lets you assign a friendly name and an input gesture to a specific UI element
+    so you can return to it later with a single shortcut. This is especially useful when a sighted user
+    is remotely controlling your machine and clicks an element you want to access independently.
+  </p>
+
+  <h2>Requirements</h2>
+  <ul>
+    <li>NVDA 2023.1 or later</li>
+    <li>Windows 10 (1809) or later</li>
+  </ul>
+
+  <h2>Default Commands</h2>
+  <ul>
+    <li><code>NVDA+Windows+M</code>: Mark element under the mouse.</li>
+    <li><code>NVDA+Windows+N</code>: Mark element at navigator/virtual caret.</li>
+    <li><code>NVDA+Windows+Shift+M</code>: Open Marker Manager for the current app.</li>
+    <li><code>NVDA+Windows+C</code>: Arm capture for the next mouse click (remote click workflow).</li>
+    <li><code>NVDA+Alt+L</code>: Open the marker list for quick activation.</li>
+  </ul>
+
+  <h2>How To Use</h2>
+
+  <h3>1) Mark an Element Under the Mouse</h3>
+  <ol>
+    <li>Move the mouse over the target element.</li>
+    <li>Press <code>NVDA+Windows+M</code>.</li>
+    <li>Enter a friendly name.</li>
+    <li>Enter a gesture identifier (or use Capture) and press OK.</li>
+  </ol>
+
+  <h3>2) Mark an Element at the Navigator</h3>
+  <ol>
+    <li>Move the navigator object (or virtual caret in browse mode) to the target element.</li>
+    <li>Press <code>NVDA+Windows+N</code>.</li>
+    <li>Enter a friendly name and gesture, then press OK.</li>
+  </ol>
+
+  <h3>3) Remote Click Workflow (Sighted User)</h3>
+  <ol>
+    <li>Press <code>NVDA+Windows+C</code> to arm capture.</li>
+    <li>The sighted/remote user clicks the element.</li>
+    <li>The marker dialog opens. Enter a friendly name and gesture, then press OK.</li>
+  </ol>
+  <div class="note">
+    Press <code>NVDA+Windows+C</code> again to cancel capture if needed.
+  </div>
+
+  <h3>4) Capture a Gesture</h3>
+  <ol>
+    <li>In the marker dialog, select “Capture Gesture”.</li>
+    <li>Perform the gesture you want to use (keyboard, braille, touch, etc.).</li>
+    <li>If multiple identifiers are available, choose the desired one.</li>
+  </ol>
+  <p>
+    The captured value is stored as a normalized NVDA gesture identifier,
+    for example <code>kb:NVDA+shift+v</code> or <code>kb(laptop):NVDA+t</code>.
+  </p>
+  <div class="note">
+    Gesture assignment is optional. You can save a marker without a shortcut and activate it from the marker list.
+  </div>
+
+  <h3>5) Activate a Marker</h3>
+  <ol>
+    <li>Focus the same application (and document if applicable).</li>
+    <li>Press the assigned gesture.</li>
+    <li>NVDA will attempt to locate the element, move to it, and activate it.</li>
+  </ol>
+  <p>
+    Or press <code>NVDA+Alt+L</code> to open the marker list and activate a marker by name.
+  </p>
+
+  <h3>6) Manage or Delete Markers</h3>
+  <ol>
+    <li>Press <code>NVDA+Windows+Shift+M</code>.</li>
+    <li>Select a marker and press “Delete Selected” to remove it.</li>
+  </ol>
+
+  <h2>Input Gestures Dialog Integration</h2>
+  <p>
+    All marker gestures appear under the category <strong>Remote Element Marker</strong>
+    in NVDA’s Input Gestures dialog. Each marker is listed as a script with its friendly name.
+    You can view or change the gesture there if you prefer.
+  </p>
+
+  <h2>Settings</h2>
+  <p>
+    Open NVDA Settings and select <strong>Remote Element Marker</strong>.
+  </p>
+  <ul>
+    <li><strong>Announce custom labels when navigating elements</strong>: When enabled, NVDA will announce
+      your custom label when you navigate to a marked element (focus, object navigation, etc.).</li>
+  </ul>
+  <div class="note">
+    Disclaimer: This is best-effort matching. If the UI changes, the label may not be applied or
+    could apply to a different element. Disable this option if you prefer NVDA’s default labels.
+  </div>
+
+  <h2>Storage and Scope</h2>
+  <ul>
+    <li>Markers are stored in: <code>%appdata%\nvda\remoteElementMarkers.json</code>.</li>
+    <li>Markers are scoped to the application and (for web documents) the document identifier.</li>
+  </ul>
+
+  <h2>Known Limitations</h2>
+  <ul>
+    <li>Element matching uses a best-effort search and may fail if the UI changes.</li>
+    <li>Web markers are scoped to a specific document identifier and may not carry across pages.</li>
+    <li>Some elements may not support default action; NVDA will still attempt to focus them.</li>
+  </ul>
+
+  <h2>Troubleshooting</h2>
+  <ul>
+    <li><strong>“Gesture already assigned”</strong>: Choose a different gesture or remove the existing binding.</li>
+    <li><strong>“Element not found”</strong>: Re-mark the element; the UI may have changed.</li>
+    <li><strong>No markers in manager</strong>: Ensure you are in the same application context.</li>
+  </ul>
+
+  <h2>Support</h2>
+  <p>
+    This add-on is provided by Team 2. For support or improvements, contact the maintainer
+    listed in the add-on’s manifest.
+  </p>
+</body>
+</html>
