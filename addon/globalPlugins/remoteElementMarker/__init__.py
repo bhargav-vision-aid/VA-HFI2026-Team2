@@ -101,9 +101,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		return app_key.split("|")[0]
 
 	def _get_base_app_key(self, obj) -> str:
-		process_name = getattr(obj, "processName", "unknown")
+		app_name = getattr(obj.appModule, "appName", "unknown")
 		app_module = getattr(obj.appModule, "appModuleName", "unknown") if obj.appModule else "unknown"
-		return f"{process_name}|{app_module}"
+		return f"{app_name}|{app_module}"
 
 	def _get_app_key_candidates(self) -> List[str]:
 		candidates = []
@@ -666,7 +666,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			except Exception:
 				pass
 		fg = api.getForegroundObject()
-		log.debugWarning(f"REM _get_browse_root: falling back to foreground={getattr(fg, 'processName', '?')}")
+		log.debugWarning(f"REM _get_browse_root: falling back to foreground={getattr(fg, 'appName', '?')}")
 		return fg
 
 	def _beginMarkingProcess(self, obj, source):
@@ -772,7 +772,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			log.debugWarning(f"REM using pre_root: {getattr(resolve_root, 'name', '?')!r}")
 		else:
 			resolve_root = self._get_browse_root() if marker_data.get("backend") == "BrowseMode" else api.getForegroundObject()
-			log.debugWarning(f"REM using live root: {getattr(resolve_root, 'name', None) or getattr(resolve_root, 'processName', '?')!r}")
+			log.debugWarning(f"REM using live root: {getattr(resolve_root, 'name', None) or getattr(resolve_root, 'appName', '?')!r}")
 
 		def on_resolve_done(target_obj):
 			self._activate_resolved_element(target_obj, marker_data)

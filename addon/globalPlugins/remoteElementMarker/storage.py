@@ -45,9 +45,9 @@ class MarkerStore:
 			raise
 
 	def get_app_key(self, obj) -> str:
-		process_name = getattr(obj, "processName", "unknown")
+		app_name = getattr(obj.appModule, "appName", "unknown")
 		app_module = getattr(obj.appModule, "appModuleName", "unknown") if obj.appModule else "unknown"
-		parts = [process_name, app_module]
+		parts = [app_name, app_module]
 		doc_id = get_document_identifier(obj)
 		if doc_id:
 			parts.append(f"doc:{doc_id}")
