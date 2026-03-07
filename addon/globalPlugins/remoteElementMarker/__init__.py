@@ -8,7 +8,8 @@ import time
 
 
 import globalPluginHandler  # type: ignore
-#import addonHandler  # type: ignore
+
+# import addonHandler  # type: ignore
 import api  # type: ignore
 import config  # type: ignore
 from scriptHandler import script  # type: ignore
@@ -30,7 +31,7 @@ from .resolver import resolve_element
 from .bindings import normalize_shortcut
 from .settings import RemoteElementMarkerSettingsPanel
 
-#addonHandler.initTranslation()
+# addonHandler.initTranslation()
 
 
 class FriendlyNameOverlay(NVDAObjects.NVDAObject):
@@ -42,7 +43,6 @@ class FriendlyNameOverlay(NVDAObjects.NVDAObject):
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
-
 	scriptCategory = "Remote Element Marker"
 
 	def __init__(self):
@@ -70,14 +70,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def _bind_saved_shortcuts(self):
 		"""Bind all saved marker shortcuts dynamically."""
 		self.clearGestureBindings()
-		self.bindGestures({
-			"kb:NVDA+windows+m": "markElementFromMouse",
-			"kb:NVDA+windows+n": "markElementFromNavigator",
-			"kb:NVDA+windows+shift+m": "openMarkerManager",
-			"kb:NVDA+windows+c": "armClickCapture",
-			"kb:NVDA+alt+l": "openMarkerList",
-			"kb:NVDA+windows+shift+a": "toggleAnnounceLabels",
-		})
+		self.bindGestures(
+			{
+				"kb:NVDA+windows+m": "markElementFromMouse",
+				"kb:NVDA+windows+n": "markElementFromNavigator",
+				"kb:NVDA+windows+shift+m": "openMarkerManager",
+				"kb:NVDA+windows+c": "armClickCapture",
+				"kb:NVDA+alt+l": "openMarkerList",
+				"kb:NVDA+windows+shift+a": "toggleAnnounceLabels",
+			}
+		)
 		self._remove_dynamic_scripts()
 
 		bound_shortcuts = set()
@@ -156,12 +158,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			for sig_hash, marker_data in app_data.get("markers", {}).items():
 				label = marker_data.get("friendlyName", "Unknown")
 				if "doc:" in app_key:
-					label = f"{label} [{app_key.split('doc:',1)[1]}]"
-				items.append({
-					"app_key": app_key,
-					"sig_hash": sig_hash,
-					"label": label,
-				})
+					label = f"{label} [{app_key.split('doc:', 1)[1]}]"
+				items.append(
+					{
+						"app_key": app_key,
+						"sig_hash": sig_hash,
+						"label": label,
+					}
+				)
 		return items
 
 	def _save_store(self) -> None:
@@ -214,7 +218,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Toggle Remote Element Marker label announcements on or off.",
-		gesture="kb:NVDA+windows+shift+a"
+		gesture="kb:NVDA+windows+shift+a",
 	)
 	def script_toggleAnnounceLabels(self, gesture):
 		self._announce_enabled = not self._announce_enabled
@@ -339,7 +343,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 					m_name = m_primary.get("name", "") or m.get("fuzzyHints", {}).get("name", "") or ""
 					if m_name and s_name and m_name != s_name:
 						continue
-					m_url = m_primary.get("url_if_web", "") or m.get("fuzzyHints", {}).get("url_if_web", "") or ""
+					m_url = (
+						m_primary.get("url_if_web", "") or m.get("fuzzyHints", {}).get("url_if_web", "") or ""
+					)
 					if m_url and s_url and m_url != s_url:
 						continue
 					return m
@@ -510,6 +516,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def _register_dynamic_script(self, script_name: str, app_key: str, sig_hash: str, friendly_name: str):
 		def script_func(self, gesture):
 			self._invoke_marker(app_key, sig_hash)
+
 		script_func.__doc__ = f"Activate marker: {friendly_name}"
 		setattr(self.__class__, f"script_{script_name}", script_func)
 		self._dynamic_script_names.add(script_name)
@@ -537,7 +544,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Captures the element under the mouse pointer to assign a custom name and shortcut.",
-		gesture="kb:NVDA+windows+m"
+		gesture="kb:NVDA+windows+m",
 	)
 	def script_markElementFromMouse(self, gesture):
 		obj = api.getMouseObject()
@@ -548,7 +555,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Captures the element at the navigator object or virtual caret to assign a custom name and shortcut.",
-		gesture="kb:NVDA+windows+n"
+		gesture="kb:NVDA+windows+n",
 	)
 	def script_markElementFromNavigator(self, gesture):
 		obj = api.getNavigatorObject()
@@ -570,7 +577,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Opens the Remote Element Marker Manager for the current application.",
-		gesture="kb:NVDA+windows+shift+m"
+		gesture="kb:NVDA+windows+shift+m",
 	)
 	def script_openMarkerManager(self, gesture):
 		candidates = self._get_app_key_candidates()
@@ -590,6 +597,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		def run_manager_dialog():
 			nvda_gui.mainFrame.prePopup()
 			from .gui import MarkerManagerDialog
+
 			d = MarkerManagerDialog(nvda_gui.mainFrame, app_key, markers_dict, self._delete_marker_callback)
 			d.ShowModal()
 			nvda_gui.mainFrame.postPopup()
@@ -598,13 +606,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Opens the Remote Element Marker list for the current application.",
-		gesture="kb:NVDA+alt+l"
+		gesture="kb:NVDA+alt+l",
 	)
 	def script_openMarkerList(self, gesture):
 		# Capture everything needed BEFORE the dialog opens and steals focus from the browser.
 		pre_candidates = self._get_app_key_candidates()
 		pre_root = self._get_browse_root()
-		log.debugWarning(f"REM openMarkerList: candidates={pre_candidates}, root={getattr(pre_root, 'name', None) or '?'}")
+		log.debugWarning(
+			f"REM openMarkerList: candidates={pre_candidates}, root={getattr(pre_root, 'name', None) or '?'}"
+		)
 
 		items = self._get_markers_for_current_app()
 		if not items:
@@ -614,6 +624,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		def run_picker_dialog():
 			nvda_gui.mainFrame.prePopup()
 			from .gui import MarkerPickerDialog
+
 			d = MarkerPickerDialog(nvda_gui.mainFrame, items)
 			if d.ShowModal() == wx.ID_OK:
 				sig_hash = getattr(d, "selected_hash", None)
@@ -622,7 +633,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 					# Pass pre_root so _invoke_marker uses the browser root
 					# captured before the dialog opened, not the NVDA dialog root.
 					self._invoke_marker(
-						app_key, sig_hash,
+						app_key,
+						sig_hash,
 						pre_candidates=pre_candidates,
 						pre_root=pre_root,
 					)
@@ -632,7 +644,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Arms capture for the next mouse click so a sighted user can click an element to mark.",
-		gesture="kb:NVDA+windows+c"
+		gesture="kb:NVDA+windows+c",
 	)
 	def script_armClickCapture(self, gesture):
 		if self._capture_next_click:
@@ -661,7 +673,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 					if ti and getattr(ti, "isReady", False):
 						root = getattr(ti, "rootNVDAObject", None)
 						if root:
-							log.debugWarning(f"REM _get_browse_root: found root={getattr(root, 'name', '?')!r} via {getter.__name__}")
+							log.debugWarning(
+								f"REM _get_browse_root: found root={getattr(root, 'name', '?')!r} via {getter.__name__}"
+							)
 							return root
 			except Exception:
 				pass
@@ -677,23 +691,17 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		def run_dialog():
 			nvda_gui.mainFrame.prePopup()
 			default_name = getattr(obj, "name", "") or getattr(obj, "roleText", "") or "Element"
-			d = MarkerDialog(nvda_gui.mainFrame, default_name=default_name)
+			d = MarkerDialog(
+				nvda_gui.mainFrame,
+				default_name=default_name,
+				marker_instance=self,
+				app_key=app_key,
+				signature_hash=signature["hash"],
+			)
 			if d.ShowModal() == wx.ID_OK:
 				name = d.friendly_name
 				shortcut = d.shortcut
 				normalized = normalize_shortcut(shortcut) if shortcut else ""
-				if shortcut and not normalized:
-					ui.message("Invalid gesture. Use an NVDA gesture identifier like kb:NVDA+shift+v.")
-					return
-				if normalized:
-					conflicts = self._find_conflicts(normalized)
-					if conflicts:
-						conflict_text = "; ".join([f"{n} ({cat})" for cat, n in conflicts])
-						ui.message(f"Gesture already assigned: {conflict_text}")
-						return
-					if self._is_shortcut_taken(normalized, app_key, signature["hash"]):
-						ui.message("That shortcut is already assigned to another marker.")
-						return
 				self._save_new_marker(app_key, signature, name, normalized)
 				if normalized:
 					ui.message(f"Marker '{name}' saved with shortcut {normalized}.")
@@ -708,8 +716,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			self._capture_next_click = False
 			if obj:
 				queueHandler.queueFunction(
-					queueHandler.eventQueue,
-					lambda: self._beginMarkingProcess(obj, "MouseClick")
+					queueHandler.eventQueue, lambda: self._beginMarkingProcess(obj, "MouseClick")
 				)
 			else:
 				ui.message("No object found at click.")
@@ -771,8 +778,14 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			resolve_root = pre_root
 			log.debugWarning(f"REM using pre_root: {getattr(resolve_root, 'name', '?')!r}")
 		else:
-			resolve_root = self._get_browse_root() if marker_data.get("backend") == "BrowseMode" else api.getForegroundObject()
-			log.debugWarning(f"REM using live root: {getattr(resolve_root, 'name', None) or getattr(resolve_root, 'appName', '?')!r}")
+			resolve_root = (
+				self._get_browse_root()
+				if marker_data.get("backend") == "BrowseMode"
+				else api.getForegroundObject()
+			)
+			log.debugWarning(
+				f"REM using live root: {getattr(resolve_root, 'name', None) or getattr(resolve_root, 'appName', '?')!r}"
+			)
 
 		def on_resolve_done(target_obj):
 			self._activate_resolved_element(target_obj, marker_data)

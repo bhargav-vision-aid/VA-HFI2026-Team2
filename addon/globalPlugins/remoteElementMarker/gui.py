@@ -12,6 +12,7 @@ def _alert(message_text, title="Remote Element Marker"):
 	"""
 	try:
 		from gui import message  # type: ignore
+
 		message.MessageDialog.alert(message_text, title)
 	except Exception:
 		wx.MessageBox(message_text, title, wx.OK | wx.ICON_INFORMATION)
@@ -24,6 +25,7 @@ def _confirm(message_text, title="Remote Element Marker") -> bool:
 	"""
 	try:
 		from gui import message  # type: ignore
+
 		result = message.MessageDialog.confirm(message_text, title)
 		# ReturnCode.OK exists on newer NVDA; compare by value to stay robust
 		return str(result).endswith("OK") or result == getattr(
@@ -38,8 +40,13 @@ class MarkerDialog(wx.Dialog):
 	Dialog to prompt the user for a Friendly Name and a Shortcut Key
 	when marking a remote element.
 	"""
-	def __init__(self, parent, default_name=""):
+
+	def __init__(self, parent, default_name="", marker_instance=None, app_key="", signature_hash=""):
 		wx.Dialog.__init__(self, parent, title="Add Remote Element Marker")
+
+		self.marker_instance = marker_instance
+		self.app_key = app_key
+		self.signature_hash = signature_hash
 
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
 		sHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
@@ -50,15 +57,13 @@ class MarkerDialog(wx.Dialog):
 
 		# Shortcut Instructions
 		self.instructions = wx.StaticText(
-			self,
-			label="Enter an NVDA gesture identifier or use Capture to record a gesture."
+			self, label="Enter an NVDA gesture identifier or use Capture to record a gesture."
 		)
 		sHelper.addItem(self.instructions)
 
 		# Shortcut Input
 		self.shortcut_edit = sHelper.addLabeledControl(
-			"&Shortcut (optional, e.g. kb:NVDA+control+1):",
-			wx.TextCtrl
+			"&Shortcut (optional, e.g. kb:NVDA+control+1):", wx.TextCtrl
 		)
 
 		# Capture button
@@ -85,6 +90,28 @@ class MarkerDialog(wx.Dialog):
 		self._stopCapture()
 		self.friendly_name = self.name_edit.Value.strip()
 		self.shortcut = self.shortcut_edit.Value.strip()
+
+		if self.shortcut:
+			from . import normalize_shortcut
+
+			normalized = normalize_shortcut(self.shortcut)
+			if not normalized:
+				_alert(
+					"Invalid or unsupported gesture. Use the Capture button to record a valid NVDA gesture, "
+					"or enter a valid gesture identifier like kb:NVDA+shift+1.",
+					"Input Error",
+				)
+				return
+			if self.marker_instance:
+				conflicts = self.marker_instance._find_conflicts(normalized)
+				if conflicts:
+					conflict_text = "; ".join([f"{n} ({cat})" for cat, n in conflicts])
+					_alert(f"Gesture already assigned: {conflict_text}", "Input Error")
+					return
+				if self.marker_instance._is_shortcut_taken(normalized, self.app_key, self.signature_hash):
+					_alert("That shortcut is already assigned to another marker.", "Input Error")
+					return
+
 		self.EndModal(wx.ID_OK)
 
 	def onCapture(self, evt):
@@ -149,8 +176,14 @@ class MarkerManagerDialog(wx.Dialog):
 	"""
 	Dialog to list, manage, and delete existing markers for the active application.
 	"""
+
 	def __init__(self, parent, app_key, markers_dict, delete_callback):
-		wx.Dialog.__init__(self, parent, title="Manage Remote Element Markers", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+		wx.Dialog.__init__(
+			self,
+			parent,
+			title="Manage Remote Element Markers",
+			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+		)
 
 		self.app_key = app_key
 		self.markers_dict = markers_dict
@@ -212,8 +245,14 @@ class MarkerPickerDialog(wx.Dialog):
 	"""
 	Dialog to select and activate a marker for the current application.
 	"""
+
 	def __init__(self, parent, items):
-		wx.Dialog.__init__(self, parent, title="Activate Remote Element Marker", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+		wx.Dialog.__init__(
+			self,
+			parent,
+			title="Activate Remote Element Marker",
+			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+		)
 
 		self.items = items
 
