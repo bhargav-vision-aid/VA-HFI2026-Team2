@@ -57,7 +57,7 @@ class MarkerDialog(wx.Dialog):
 
 		# Shortcut Instructions
 		self.instructions = wx.StaticText(
-			self, label="Use the Capture Gesture to record a gesture."
+			self, label="Use the Capture Gesture button to record a gesture."
 		)
 		sHelper.addItem(self.instructions)
 		
@@ -170,7 +170,7 @@ class MarkerDialog(wx.Dialog):
 		if self._capturing and inputCore.manager and inputCore.manager._captureFunc == self._gestureCaptor:
 			inputCore.manager._captureFunc = None
 		self._capturing = False
-		self.instructions.Label = "Use the Capture Gesture to record a gesture."
+		self.instructions.Label = "Use the Capture Gesture button to record a gesture."
 
 	def onDestroy(self, evt):
 		self._stopCapture()
