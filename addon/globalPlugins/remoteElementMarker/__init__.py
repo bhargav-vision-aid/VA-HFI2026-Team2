@@ -651,6 +651,17 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			self._capture_next_click = False
 			ui.message("Remote click capture canceled.")
 		else:
+			try:
+				mouse_tracking_enabled = config.conf["mouse"]["enableMouseTracking"]
+			except Exception:
+				mouse_tracking_enabled = True  # assume enabled if config key missing
+			if not mouse_tracking_enabled:
+				ui.message(
+					"Mouse tracking is disabled. "
+					"Please enable it under NVDA Preferences, Mouse settings, "
+					"then try again."
+				)
+				return
 			self._capture_next_click = True
 			ui.message("Remote click capture armed. Click an element now.")
 
@@ -714,6 +725,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def event_mouseDown(self, obj, nextHandler):
 		if self._capture_next_click:
 			self._capture_next_click = False
+			# obj can be None on some NVDA versions; fall back to api.getMouseObject()
+			if not obj:
+				try:
+					obj = api.getMouseObject()
+				except Exception:
+					obj = None
 			if obj:
 				queueHandler.queueFunction(
 					queueHandler.eventQueue, lambda: self._beginMarkingProcess(obj, "MouseClick")
