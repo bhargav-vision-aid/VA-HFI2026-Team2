@@ -34,6 +34,15 @@ from .settings import RemoteElementMarkerSettingsPanel
 # addonHandler.initTranslation()
 
 
+def _shortcut_to_script_suffix(shortcut: str) -> str:
+	"""
+	 Convert a normalized shortcut string like 'kb:NVDA+alt+1' into a safe
+	Python identifier suffix like 'kb_NVDA_alt_1' for use as a script name.
+	"""
+	import re
+	return re.sub(r"[^a-zA-Z0-9]", "_", shortcut)
+
+
 class FriendlyNameOverlay(NVDAObjects.NVDAObject):
 	def _get_name(self):
 		name = getattr(self, "_remoteElementMarkerFriendlyName", None)
@@ -68,7 +77,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			self._schedule_nav_monitor_tick()
 
 	def _bind_saved_shortcuts(self):
-		"""Bind all saved marker shortcuts dynamically."""
+		"""
+		Bind marker shortcuts as document-scoped dispatchers.
+
+		Each unique shortcut string gets exactly ONE bound script — a dispatcher
+		that, at invocation time, looks up which marker in the *current document*
+		uses that shortcut.  This allows the same gesture (e.g. NVDA+Alt+1) to be
+		assigned to different markers on different pages / applications without
+		conflict, and prevents the gesture from firing when the target document is
+		not open.
+		"""
 		self.clearGestureBindings()
 		self.bindGestures(
 			{
@@ -82,19 +100,19 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		)
 		self._remove_dynamic_scripts()
 
-		bound_shortcuts = set()
+		# Collect every unique shortcut string across ALL documents.
+		# We register one dispatcher script per shortcut, not one per marker.
+		unique_shortcuts = set()
 		for app_key, app_data in self._store.all_markers().items():
 			for sig_hash, marker_data in app_data.get("markers", {}).items():
 				shortcut = normalize_shortcut(marker_data.get("shortcut", ""))
 				if shortcut:
-					if shortcut in bound_shortcuts:
-						log.warning(f"Duplicate shortcut skipped: {shortcut}")
-						continue
-					bound_shortcuts.add(shortcut)
-					script_name = f"invokeMarker_{sig_hash}"
-					friendly_name = marker_data.get("friendlyName", "Unknown")
-					self._register_dynamic_script(script_name, app_key, sig_hash, friendly_name)
-					self.bindGesture(shortcut, script_name)
+					unique_shortcuts.add(shortcut)
+
+		for shortcut in unique_shortcuts:
+			script_name = f"invokeMarkerByShortcut_{_shortcut_to_script_suffix(shortcut)}"
+			self._register_shortcut_dispatcher(script_name, shortcut)
+			self.bindGesture(shortcut, script_name)
 
 	def _get_app_key(self, obj) -> str:
 		return self._store.get_app_key(obj)
@@ -513,7 +531,65 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		except Exception:
 			pass
 
+	def _register_shortcut_dispatcher(self, script_name: str, shortcut: str):
+		"""
+		Register a dispatcher script for a shortcut string.
+
+		At invocation time the dispatcher:
+		  1. Determines the active document key(s).
+		  2. Searches for a marker in those documents that uses this shortcut.
+		  3. If found, invokes it.  If not found (wrong document / app), speaks
+		     a friendly "not available here" message instead of silently resolving.
+		"""
+		def script_func(self_plugin, gesture):
+			self_plugin._dispatch_shortcut(shortcut)
+
+		script_func.__doc__ = f"Remote Element Marker shortcut dispatcher for {shortcut}"
+		setattr(self.__class__, f"script_{script_name}", script_func)
+		self._dynamic_script_names.add(script_name)
+
+	def _dispatch_shortcut(self, shortcut: str):
+		"""
+		Find the marker for *shortcut* that belongs to the current document and
+		invoke it.  If no marker matches the current document, tell the user.
+		"""
+		candidates = self._get_app_key_candidates()
+		candidate_set = set(candidates)
+		base_candidates = {c.split("|doc:", 1)[0] for c in candidates}
+		doc_candidates = {c for c in candidates if "|doc:" in c}
+
+		for app_key, app_data in self._store.all_markers().items():
+			# --- document / app scoping check ---
+			is_doc_scoped = "|doc:" in app_key
+			if is_doc_scoped:
+				# Document-scoped marker: only fire when that exact document is open.
+				if app_key not in doc_candidates:
+					continue
+			else:
+				# App-scoped marker: fire when the app is in the foreground.
+				base = app_key.split("|doc:", 1)[0]
+				if app_key not in candidate_set and base not in base_candidates:
+					continue
+
+			# --- shortcut match ---
+			for sig_hash, marker_data in app_data.get("markers", {}).items():
+				stored = normalize_shortcut(marker_data.get("shortcut", ""))
+				if stored == shortcut:
+					log.debugWarning(
+						f"REM dispatcher matched shortcut={shortcut} -> "
+						f"app_key={app_key}, hash={sig_hash}"
+					)
+					self._invoke_marker(app_key, sig_hash)
+					return
+
+		# No match for the current document.
+		ui.message("This shortcut has no marker for the current document.")
+		log.debugWarning(
+			f"REM dispatcher: no match for shortcut={shortcut} in candidates={candidates}"
+		)
+
 	def _register_dynamic_script(self, script_name: str, app_key: str, sig_hash: str, friendly_name: str):
+		"""Legacy helper kept for external callers; internally unused."""
 		def script_func(self, gesture):
 			self._invoke_marker(app_key, sig_hash)
 
@@ -528,18 +604,59 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 				delattr(self.__class__, attr)
 		self._dynamic_script_names.clear()
 
+	@staticmethod
+	def _gesture_variants(shortcut: str):
+		"""
+		Return the set of normalised gesture identifiers that are effectively
+		equivalent to *shortcut* across keyboard layouts.
+
+		NVDA stores gestures in three layout namespaces:
+		  kb:          — all layouts
+		  kb(laptop):  — laptop layout only
+		  kb(desktop): — desktop layout only
+
+		A gesture assigned to "all layouts" (kb:) conflicts with the same
+		key in any specific layout and vice-versa.  We expand the shortcut
+		into all three variants so the caller can check them all at once.
+		"""
+		variants = {shortcut}
+		if ":" not in shortcut:
+			return variants
+		source, rest = shortcut.split(":", 1)
+		sl = source.lower()
+		if sl == "kb":
+			# all-layouts gesture also conflicts with laptop/desktop specifics
+			variants.add(f"kb(laptop):{rest}")
+			variants.add(f"kb(desktop):{rest}")
+		elif sl in ("kb(laptop)", "kb(desktop)"):
+			# specific-layout gesture also conflicts with the all-layouts one
+			variants.add(f"kb:{rest}")
+			# and with the other specific layout (they share the same physical key)
+			other = "kb(desktop)" if sl == "kb(laptop)" else "kb(laptop)"
+			variants.add(f"{other}:{rest}")
+		return variants
+
 	def _find_conflicts(self, shortcut: str):
+		"""
+		Return a list of (category, displayName) tuples for every NVDA script
+		that uses a gesture effectively equivalent to *shortcut*, across all
+		keyboard-layout variants (kb:, kb(laptop):, kb(desktop):).
+		"""
 		if not inputCore.manager:
 			return None
 		try:
 			mappings = inputCore.manager.getAllGestureMappings()
 		except Exception:
 			return None
+		variants = self._gesture_variants(shortcut)
 		conflicts = []
 		for category, scripts in mappings.items():
 			for script_info in scripts.values():
-				if shortcut in script_info.gestures:
-					conflicts.append((category, script_info.displayName))
+				# script_info.gestures is a set/list of normalised gesture strings
+				for g in script_info.gestures:
+					if g in variants:
+						conflicts.append((category, script_info.displayName))
+						break  # don't double-count the same script
 		return conflicts
 
 	@script(
@@ -740,15 +857,46 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		if nextHandler:
 			nextHandler()
 
+	def _find_same_doc_shortcut_conflict(self, shortcut: str, app_key: str, sig_hash: str):
+		"""
+		Look for another marker *within the exact same document / app key* that
+		already uses *shortcut* (cross-layout aware).
+
+		Only markers stored under the identical app_key are checked.
+		Markers on other documents (even from the same browser/app) are
+		entirely separate scopes and must never trigger a conflict here.
+
+		Returns a dict with keys 'friendly_name', 'app_key', 'sig_hash' if a
+		conflict exists, or None if the shortcut is free in this scope.
+		"""
+		variants = self._gesture_variants(shortcut)
+		# Only examine the single bucket that matches this exact document key.
+		app_data = self._store.all_markers().get(app_key, {})
+		for existing_hash, marker_data in app_data.get("markers", {}).items():
+			# Skip the marker we are currently editing/creating.
+			if existing_hash == sig_hash:
+				continue
+			existing_shortcut = normalize_shortcut(marker_data.get("shortcut", ""))
+			if existing_shortcut in variants:
+				return {
+					"friendly_name": marker_data.get("friendlyName", "Unknown"),
+					"app_key": app_key,
+					"sig_hash": existing_hash,
+				}
+		return None
+
 	def _is_shortcut_taken(self, shortcut: str, app_key: str, sig_hash: str) -> bool:
-		for existing_app_key, app_data in self._store.all_markers().items():
-			for existing_hash, marker_data in app_data.get("markers", {}).items():
-				if existing_app_key == app_key and existing_hash == sig_hash:
-					continue
-				existing_shortcut = normalize_shortcut(marker_data.get("shortcut", ""))
-				if existing_shortcut == shortcut:
-					return True
-		return False
+		"""Backward-compat wrapper — returns bool."""
+		return self._find_same_doc_shortcut_conflict(shortcut, app_key, sig_hash) is not None
+
+	def _clear_shortcut_from_marker(self, app_key: str, sig_hash: str) -> None:
+		"""Remove the shortcut from an existing marker without deleting it."""
+		marker = self._store.get_marker(app_key, sig_hash)
+		if marker:
+			marker["shortcut"] = ""
+			self._store.set_marker(app_key, sig_hash, marker)
+			self._save_store()
+			self._bind_saved_shortcuts()
 
 	def _save_new_marker(self, app_key: str, signature: Dict[str, Any], name: str, shortcut: str):
 		sig_hash = signature["hash"]

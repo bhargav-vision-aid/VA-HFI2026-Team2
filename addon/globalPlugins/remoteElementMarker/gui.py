@@ -2,6 +2,9 @@ import wx  # type: ignore
 import gui  # type: ignore
 import inputCore  # type: ignore
 
+# Custom return codes used by ConflictDialog
+_ID_REPLACE = wx.NewIdRef()
+
 
 def _alert(message_text, title="Remote Element Marker"):
 	"""
@@ -35,6 +38,40 @@ def _confirm(message_text, title="Remote Element Marker") -> bool:
 		return wx.MessageBox(message_text, title, wx.YES_NO | wx.ICON_QUESTION) == wx.YES
 
 
+class ConflictDialog(wx.Dialog):
+	"""
+	Shown when a captured gesture conflicts with an existing assignment.
+	Presents the conflict details and offers Replace / Cancel choices.
+	"""
+
+	def __init__(self, parent, message_text, title="Gesture Conflict"):
+		wx.Dialog.__init__(self, parent, title=title)
+		main_sizer = wx.BoxSizer(wx.VERTICAL)
+		border = gui.guiHelper.BORDER_FOR_DIALOGS
+
+		# Message
+		msg = wx.StaticText(self, label=message_text)
+		msg.Wrap(480)
+		main_sizer.Add(msg, flag=wx.ALL, border=border)
+
+		# Buttons: Replace | Cancel
+		btn_sizer = wx.StdDialogButtonSizer()
+		replace_btn = wx.Button(self, id=_ID_REPLACE, label="&Replace")
+		replace_btn.SetDefault()
+		cancel_btn = wx.Button(self, id=wx.ID_CANCEL, label="&Cancel")
+		btn_sizer.AddButton(replace_btn)
+		btn_sizer.AddButton(cancel_btn)
+		btn_sizer.Realize()
+		main_sizer.Add(btn_sizer, flag=wx.ALL | wx.ALIGN_RIGHT, border=border)
+
+		self.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(_ID_REPLACE), replace_btn)
+		self.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_CANCEL), cancel_btn)
+
+		self.Sizer = main_sizer
+		main_sizer.Fit(self)
+		self.CentreOnScreen()
+
+
 class MarkerDialog(wx.Dialog):
 	"""
 	Dialog to prompt the user for a Friendly Name and a Shortcut Key
@@ -60,17 +97,17 @@ class MarkerDialog(wx.Dialog):
 			self, label="Use the Capture Gesture button to record a gesture."
 		)
 		sHelper.addItem(self.instructions)
-		
+
 		# Capture button
 		self.capture_btn = wx.Button(self, label="&Capture Gesture")
 		self.Bind(wx.EVT_BUTTON, self.onCapture, self.capture_btn)
 		sHelper.addItem(self.capture_btn)
-		
+
 		self._captured_raw_gid = None
 
 		# Shortcut Input
 		self.shortcut_edit = sHelper.addLabeledControl(
-			"&Shortcut caputured:", wx.TextCtrl, style=wx.TE_READONLY
+			"&Shortcut captured:", wx.TextCtrl, style=wx.TE_READONLY
 		)
 
 		self._capturing = False
@@ -83,6 +120,15 @@ class MarkerDialog(wx.Dialog):
 		self.Sizer = main_sizer
 		main_sizer.Fit(self)
 		self.CentreOnScreen()
+
+	def _show_conflict_dialog(self, message_text) -> bool:
+		"""
+		Show a ConflictDialog and return True if the user chose Replace.
+		"""
+		d = ConflictDialog(self, message_text)
+		result = d.ShowModal()
+		d.Destroy()
+		return result == _ID_REPLACE
 
 	def onOk(self, evt):
 		if not self.name_edit.Value.strip():
@@ -102,19 +148,53 @@ class MarkerDialog(wx.Dialog):
 			normalized = normalize_shortcut(self.shortcut)
 			if not normalized:
 				_alert(
-					"Invalid or unsupported gesture. Use the Capture button to record a valid NVDA gesture",
+					"Invalid or unsupported gesture. Use the Capture button to record a valid NVDA gesture.",
 					"Input Error",
 				)
 				return
+
 			if self.marker_instance:
-				conflicts = self.marker_instance._find_conflicts(normalized)
-				if conflicts:
-					conflict_text = "; ".join([f"{n} ({cat})" for cat, n in conflicts])
-					_alert(f"Gesture already assigned: {conflict_text}", "Input Error")
-					return
-				if self.marker_instance._is_shortcut_taken(normalized, self.app_key, self.signature_hash):
-					_alert("That shortcut is already assigned to another marker.", "Input Error")
-					return
+				# ── 1. Check conflicts with OTHER NVDA scripts (non-REM) ──────────
+				# Exclude our own dispatcher scripts — they are intentionally shared
+				# across documents and are not real conflicts.
+				all_conflicts = self.marker_instance._find_conflicts(normalized) or []
+				external_conflicts = [
+					(cat, name) for cat, name in all_conflicts
+					if not name.startswith("Remote Element Marker shortcut dispatcher")
+				]
+				if external_conflicts:
+					conflict_lines = "\n".join(
+						f"  • {name} ({cat})" for cat, name in external_conflicts
+					)
+					msg = (
+						f"The gesture is already assigned to:\n{conflict_lines}\n\n"
+						f"Do you want to replace that assignment with this marker?"
+					)
+					if not self._show_conflict_dialog(msg):
+						return  # user cancelled
+					# User chose Replace — we don't unregister the external NVDA
+					# script (that's not our responsibility), but we allow the save
+					# to proceed so the dispatcher will shadow it.
+
+				# ── 2. Check conflicts with OTHER MARKERS on the same document ──
+				same_doc_conflict = self.marker_instance._find_same_doc_shortcut_conflict(
+					normalized, self.app_key, self.signature_hash
+				)
+				if same_doc_conflict:
+					existing_name = same_doc_conflict["friendly_name"]
+					msg = (
+						f"The gesture is already assigned to the marker \"{existing_name}\" "
+						f"on this page.\n\n"
+						f"Do you want to replace that assignment and give this gesture "
+						f"to the new marker instead?"
+					)
+					if not self._show_conflict_dialog(msg):
+						return  # user cancelled
+					# User chose Replace — clear the shortcut from the old marker.
+					self.marker_instance._clear_shortcut_from_marker(
+						same_doc_conflict["app_key"],
+						same_doc_conflict["sig_hash"],
+					)
 
 		self.EndModal(wx.ID_OK)
 

@@ -1,0 +1,16 @@
+`__init__.py`:
+- `script_armClickCapture` — checks `enableMouseTracking` config before arming; gives a clear error if off
+- `event_mouseDown` — falls back to `api.getMouseObject()` when `obj` is `None`
+- `_bind_saved_shortcuts` — replaced per-marker global bindings with one dispatcher script per unique shortcut string
+- `_shortcut_to_script_suffix` — new module-level helper to make safe script name identifiers
+- `_register_shortcut_dispatcher` + `_dispatch_shortcut` — new methods; dispatcher resolves the right marker for the current document at press time, and says "no marker for current document" if wrong page
+- `_gesture_variants` — new static method expanding a shortcut to all equivalent layout forms (`kb:`, `kb(laptop):`, `kb(desktop):`) to fix cross-layout conflict detection
+- `_find_conflicts` — now checks all layout variants, not just exact string match
+- `_find_same_doc_shortcut_conflict` — replaces `_is_shortcut_taken`; checks only the exact same `app_key` bucket (fixes the LinkedIn/GitHub false conflict bug); returns rich dict with the conflicting marker's name
+- `_is_shortcut_taken` — kept as a thin bool wrapper for backward compatibility
+- `_clear_shortcut_from_marker` — new method; strips shortcut from an existing marker when user chooses Replace
+
+`gui.py`:
+- `ConflictDialog` — new dialog class with a descriptive message and **Replace** / **Cancel** buttons
+- `MarkerDialog.onOk` — two-phase conflict check: external NVDA scripts (with Replace option) then same-document markers (with Replace option that calls `_clear_shortcut_from_marker`)
+- `"&Shortcut caputured:"` typo fixed to `"&Shortcut captured:"`
