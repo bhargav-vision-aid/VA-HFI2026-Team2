@@ -2,9 +2,6 @@ import wx  # type: ignore
 import gui  # type: ignore
 import inputCore  # type: ignore
 
-# Custom return codes used by ConflictDialog
-_ID_REPLACE = wx.NewIdRef()
-
 
 def _alert(message_text, title="Remote Element Marker"):
 	"""
@@ -123,7 +120,7 @@ class MarkerDialog(wx.Dialog):
 		d = ConflictDialog(self, message_text)
 		result = d.ShowModal()
 		d.Destroy()
-		return result == _ID_REPLACE
+		return result == wx.ID_REPLACE
 
 	def onOk(self, evt):
 		if not self.name_edit.Value.strip():
