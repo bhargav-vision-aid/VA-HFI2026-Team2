@@ -47,26 +47,21 @@ class ConflictDialog(wx.Dialog):
 	def __init__(self, parent, message_text, title="Gesture Conflict"):
 		wx.Dialog.__init__(self, parent, title=title)
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
-		border = gui.guiHelper.BORDER_FOR_DIALOGS
+		#border = gui.guiHelper.BORDER_FOR_DIALOGS
+		sHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 
 		# Message
 		msg = wx.StaticText(self, label=message_text)
 		msg.Wrap(480)
-		main_sizer.Add(msg, flag=wx.ALL, border=border)
+		sHelper.addItem(msg)
+		
+		bHelper = sHelper.addDialogDismissButtons(self.CreateButtonSizer(wx.CANCEL))
+		
+		replace_btn = wx.Button(self, id=wx.ID_REPLACE, label="&Replace")
+		self.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_REPLACE), replace_btn)
+		bHelper.Insert(0, replace_btn)
 
-		# Buttons: Replace | Cancel
-		btn_sizer = wx.StdDialogButtonSizer()
-		replace_btn = wx.Button(self, id=_ID_REPLACE, label="&Replace")
-		replace_btn.SetDefault()
-		cancel_btn = wx.Button(self, id=wx.ID_CANCEL, label="&Cancel")
-		btn_sizer.AddButton(replace_btn)
-		btn_sizer.AddButton(cancel_btn)
-		btn_sizer.Realize()
-		main_sizer.Add(btn_sizer, flag=wx.ALL | wx.ALIGN_RIGHT, border=border)
-
-		self.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(_ID_REPLACE), replace_btn)
-		self.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_CANCEL), cancel_btn)
-
+		main_sizer.Add(sHelper.sizer, border=gui.guiHelper.BORDER_FOR_DIALOGS, flag=wx.ALL)
 		self.Sizer = main_sizer
 		main_sizer.Fit(self)
 		self.CentreOnScreen()
