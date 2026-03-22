@@ -34,6 +34,8 @@ All shortcuts can be customized in NVDA's Input Gestures dialog under the **Remo
 | Open marker manager for current app | `NVDA+Alt+Shift+M` |
 | Toggle label announcements on/off | `NVDA+Alt+A` |
 
+Refer to [USERGUIDE.md](https://github.com/bhargav-vision-aid/VA-HFI2026-Team2/blob/main/USERGUIDE.md#marking-an-element) to know more about usage in detail.
+
 ---
 
 ## NVDA's Developer Scratchpad - Manual Testing steps
