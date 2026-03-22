@@ -70,7 +70,7 @@ class MarkerDialog(wx.Dialog):
 	when marking a remote element.
 	"""
 
-	def __init__(self, parent, default_name="", marker_instance=None, app_key="", signature_hash=""):
+	def __init__(self, parent, default_name="", marker_instance=None, app_key="", signature_hash="", existing_shortcut=""):
 		wx.Dialog.__init__(self, parent, title="Add Remote Element Marker")
 
 		self.marker_instance = marker_instance
@@ -95,12 +95,15 @@ class MarkerDialog(wx.Dialog):
 		self.Bind(wx.EVT_BUTTON, self.onCapture, self.capture_btn)
 		sHelper.addItem(self.capture_btn)
 
-		self._captured_raw_gid = None
+		# Pre-fill with existing shortcut if editing
+		self._captured_raw_gid = existing_shortcut if existing_shortcut else None
 
 		# Shortcut Input
 		self.shortcut_edit = sHelper.addLabeledControl(
 			"&Shortcut captured:", wx.TextCtrl, style=wx.TE_READONLY
 		)
+		if existing_shortcut:
+			self.shortcut_edit.Value = self._formatGesture(existing_shortcut)
 
 		self._capturing = False
 		self.Bind(wx.EVT_WINDOW_DESTROY, self.onDestroy)
@@ -328,9 +331,10 @@ class MarkerManagerDialog(wx.Dialog):
 class MarkerPickerDialog(wx.Dialog):
 	"""
 	Dialog to select and activate a marker for the current application.
+	Includes Edit and Delete buttons for managing markers inline.
 	"""
 
-	def __init__(self, parent, items):
+	def __init__(self, parent, items, marker_instance=None, delete_callback=None, edit_callback=None):
 		wx.Dialog.__init__(
 			self,
 			parent,
@@ -338,20 +342,47 @@ class MarkerPickerDialog(wx.Dialog):
 			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
 		)
 
-		self.items = items
+		self.items = list(items)  # mutable copy
+		self.marker_instance = marker_instance
+		self.delete_callback = delete_callback
+		self.edit_callback = edit_callback
 
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
 		sHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 
 		sHelper.addItem(wx.StaticText(self, label="Markers for current application:"))
 
-		choices = [item["label"] for item in items]
+		choices = [item["label"] for item in self.items]
 		self.marker_list = sHelper.addLabeledControl("&Markers:", wx.ListBox, choices=choices)
 
 		if choices:
 			self.marker_list.SetSelection(0)
 
-		sHelper.addDialogDismissButtons(self.CreateButtonSizer(wx.OK | wx.CANCEL))
+		# Action buttons row: Activate | Edit | Delete | Cancel
+		btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+		self.activate_btn = wx.Button(self, id=wx.ID_OK, label="&Activate")
+		self.activate_btn.SetDefault()
+		btn_sizer.Add(self.activate_btn, flag=wx.RIGHT, border=gui.guiHelper.BORDER_FOR_DIALOGS)
+
+		self.edit_btn = wx.Button(self, label="&Edit")
+		self.Bind(wx.EVT_BUTTON, self.onEdit, self.edit_btn)
+		btn_sizer.Add(self.edit_btn, flag=wx.RIGHT, border=gui.guiHelper.BORDER_FOR_DIALOGS)
+
+		self.delete_btn = wx.Button(self, label="&Delete")
+		self.Bind(wx.EVT_BUTTON, self.onDelete, self.delete_btn)
+		btn_sizer.Add(self.delete_btn, flag=wx.RIGHT, border=gui.guiHelper.BORDER_FOR_DIALOGS)
+
+		cancel_btn = wx.Button(self, id=wx.ID_CANCEL, label="&Cancel")
+		btn_sizer.Add(cancel_btn)
+
+		sHelper.addItem(btn_sizer)
+
+		if not choices:
+			self.activate_btn.Disable()
+			self.edit_btn.Disable()
+			self.delete_btn.Disable()
+
 		self.Bind(wx.EVT_BUTTON, self.onOk, id=wx.ID_OK)
 
 		main_sizer.Add(sHelper.sizer, border=gui.guiHelper.BORDER_FOR_DIALOGS, flag=wx.ALL)
@@ -359,10 +390,94 @@ class MarkerPickerDialog(wx.Dialog):
 		main_sizer.Fit(self)
 		self.CentreOnScreen()
 
-	def onOk(self, evt):
+	def _selected(self):
+		"""Return (index, item) for the current list selection, or (None, None)."""
 		sel = self.marker_list.GetSelection()
-		if sel == wx.NOT_FOUND:
+		if sel == wx.NOT_FOUND or sel >= len(self.items):
+			return None, None
+		return sel, self.items[sel]
+
+	def onEdit(self, evt):
+		sel, item = self._selected()
+		if item is None:
 			return
-		self.selected_app_key = self.items[sel]["app_key"]
-		self.selected_hash = self.items[sel]["sig_hash"]
+
+		app_key = item["app_key"]
+		sig_hash = item["sig_hash"]
+
+		# Fetch the full marker data so we can pre-fill name and shortcut.
+		marker_data = None
+		if self.marker_instance:
+			marker_data = self.marker_instance._store.get_marker(app_key, sig_hash)
+		if not marker_data:
+			_alert("Could not load marker data.", "Edit Error")
+			return
+
+		current_name = marker_data.get("friendlyName", "")
+		current_shortcut = marker_data.get("shortcut", "")
+
+		d = MarkerDialog(
+			self,
+			default_name=current_name,
+			marker_instance=self.marker_instance,
+			app_key=app_key,
+			signature_hash=sig_hash,
+			existing_shortcut=current_shortcut,
+		)
+		if d.ShowModal() == wx.ID_OK:
+			new_name = d.friendly_name
+			new_shortcut = d.shortcut
+
+			if self.edit_callback:
+				self.edit_callback(app_key, sig_hash, new_name, new_shortcut or "")
+
+			# Refresh the list label in place so the user sees the change immediately.
+			from .bindings import normalize_shortcut
+			normalized = normalize_shortcut(new_shortcut) if new_shortcut else ""
+			shortcut_display = self._formatGesture(normalized) if normalized else "No Shortcut"
+			new_label = f"{new_name} [{shortcut_display}]"
+			self.items[sel]["label"] = new_label
+			self.marker_list.SetString(sel, new_label)
+			self.marker_list.SetSelection(sel)
+		d.Destroy()
+
+	def onDelete(self, evt):
+		sel, item = self._selected()
+		if item is None:
+			return
+
+		if not _confirm(
+			f"Are you sure you want to delete the marker \"{item['label']}\"?",
+			"Confirm Deletion",
+		):
+			return
+
+		if self.delete_callback:
+			self.delete_callback(item["app_key"], item["sig_hash"])
+
+		self.marker_list.Delete(sel)
+		self.items.pop(sel)
+
+		count = self.marker_list.GetCount()
+		if count > 0:
+			self.marker_list.SetSelection(min(sel, count - 1))
+		else:
+			# No markers left — disable all action buttons except Cancel.
+			self.activate_btn.Disable()
+			self.edit_btn.Disable()
+			self.delete_btn.Disable()
+
+	def onOk(self, evt):
+		sel, item = self._selected()
+		if item is None:
+			return
+		self.selected_app_key = item["app_key"]
+		self.selected_hash = item["sig_hash"]
 		self.EndModal(wx.ID_OK)
+
+	def _formatGesture(self, gid: str) -> str:
+		try:
+			source, main = inputCore.getDisplayTextForGestureIdentifier(gid)
+			return f"{main} ({source})"
+		except Exception:
+			return gid

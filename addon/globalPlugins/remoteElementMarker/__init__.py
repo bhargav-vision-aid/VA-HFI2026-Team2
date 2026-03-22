@@ -26,7 +26,7 @@ import textInfos  # type: ignore
 
 from .gui import MarkerDialog
 from .storage import MarkerStore
-from .signature import generate_signature
+from .signature import generate_signature, generate_signature_for_lookup
 from .resolver import resolve_element
 from .bindings import normalize_shortcut
 from .settings import RemoteElementMarkerSettingsPanel
@@ -58,7 +58,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		super(GlobalPlugin, self).__init__()
 		self._ensure_config()
 		self._store = MarkerStore()
-		self._capture_next_click = False
 		self._dynamic_script_names = set()
 		self._settings_registered = False
 		self._in_overlay = False
@@ -90,12 +89,11 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self.clearGestureBindings()
 		self.bindGestures(
 			{
-				"kb:NVDA+windows+m": "markElementFromMouse",
-				"kb:NVDA+windows+n": "markElementFromNavigator",
-				"kb:NVDA+windows+shift+m": "openMarkerManager",
-				"kb:NVDA+windows+c": "armClickCapture",
+				"kb:NVDA+alt+n": "markElementFromMouse",
+				"kb:NVDA+alt+b": "markElementFromNavigator",
+				"kb:NVDA+alt+shift+m": "openMarkerManager",
 				"kb:NVDA+alt+l": "openMarkerList",
-				"kb:NVDA+windows+shift+a": "toggleAnnounceLabels",
+				"kb:NVDA+alt+a": "toggleAnnounceLabels",
 			}
 		)
 		self._remove_dynamic_scripts()
@@ -236,7 +234,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Toggle Remote Element Marker label announcements on or off.",
-		gesture="kb:NVDA+windows+shift+a",
+		gesture="kb:NVDA+alt+a",
 	)
 	def script_toggleAnnounceLabels(self, gesture):
 		self._announce_enabled = not self._announce_enabled
@@ -310,7 +308,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	def _get_marker_for_obj(self, obj) -> Optional[Dict[str, Any]]:
 		try:
-			signature = generate_signature(obj)
+			# Use the lightweight lookup variant — no getTextWithFields() call.
+			# Position hints are only needed at mark time, not on every nav event.
+			signature = generate_signature_for_lookup(obj)
 			sig_hash = signature["hash"]
 			backend = signature.get("backend")
 			app_key = self._get_app_key(obj)
@@ -346,26 +346,70 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 				marker = markers.get(sig_hash)
 				if marker:
 					return marker
+				# Hash miss — fall back to position-aware BrowseMode matching.
+				# This handles old markers saved before role_index/context were
+				# added, or edge cases where NVDA rebuilds the object with a
+				# slightly different wrapper. The fallback MUST enforce name
+				# equality (including empty names) and position hints so that
+				# unlabeled buttons are not confused with each other.
 				if backend != "BrowseMode":
 					continue
 				s_primary = signature.get("primarySignature", {})
-				s_name = s_primary.get("name", "") or ""
+				s_name = (s_primary.get("name", "") or "").strip()
 				s_url = s_primary.get("url_if_web", "") or ""
 				s_role = s_primary.get("role")
+				# generate_signature_for_lookup produces no position hints.
+				# Compute them lazily once, only if any stored marker needs them.
+				_live_pos = None  # (role_index, context_before, context_after)
+
+				def _get_live_pos():
+					nonlocal _live_pos
+					if _live_pos is None:
+						from .signature import _compute_position_hints as _cph
+						ti = getattr(obj, "treeInterceptor", None)
+						pos = _cph(obj, ti)
+						_live_pos = (
+							pos["role_index"],
+							pos["context_before"],
+							pos["context_after"],
+						)
+					return _live_pos
+
 				for m in markers.values():
 					if m.get("backend") != "BrowseMode":
 						continue
 					m_primary = m.get("primarySignature", {})
 					if m_primary.get("role") != s_role:
 						continue
-					m_name = m_primary.get("name", "") or m.get("fuzzyHints", {}).get("name", "") or ""
-					if m_name and s_name and m_name != s_name:
+					# Always enforce name equality, even when both are empty.
+					m_name = (m_primary.get("name", "") or "").strip()
+					if m_name != s_name:
 						continue
-					m_url = (
-						m_primary.get("url_if_web", "") or m.get("fuzzyHints", {}).get("url_if_web", "") or ""
-					)
+					# URL must match when present.
+					m_url = (m_primary.get("url_if_web", "") or "").strip()
 					if m_url and s_url and m_url != s_url:
 						continue
+					# Position hints from the stored marker.
+					m_role_index = m_primary.get("role_index", -1)
+					m_context_before = m_primary.get("context_before", "")
+					m_context_after = m_primary.get("context_after", "")
+					has_context = bool(m_context_before or m_context_after)
+					has_index = m_role_index >= 0
+					if has_index:
+						# Compute live position once (lazy, shared across marker loop).
+						live_idx, live_before, live_after = _get_live_pos()
+						if live_idx >= 0 and live_idx != m_role_index:
+							# Index mismatch — check context as fallback for dynamic pages.
+							if has_context:
+								ctx_ok = True
+								if m_context_before and m_context_before not in live_before and live_before not in m_context_before:
+									ctx_ok = False
+								if m_context_after and m_context_after not in live_after and live_after not in m_context_after:
+									ctx_ok = False
+								if not ctx_ok:
+									continue
+							else:
+								continue
 					return m
 		except Exception as e:
 			log.debugWarning(f"_get_marker_for_obj error: {e}")
@@ -661,7 +705,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Captures the element under the mouse pointer to assign a custom name and shortcut.",
-		gesture="kb:NVDA+windows+m",
+		gesture="kb:NVDA+alt+n",
 	)
 	def script_markElementFromMouse(self, gesture):
 		obj = api.getMouseObject()
@@ -672,7 +716,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Captures the element at the navigator object or virtual caret to assign a custom name and shortcut.",
-		gesture="kb:NVDA+windows+n",
+		gesture="kb:NVDA+alt+b",
 	)
 	def script_markElementFromNavigator(self, gesture):
 		obj = api.getNavigatorObject()
@@ -694,7 +738,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 	@script(
 		description="Opens the Remote Element Marker Manager for the current application.",
-		gesture="kb:NVDA+windows+shift+m",
+		gesture="kb:NVDA+alt+shift+m",
 	)
 	def script_openMarkerManager(self, gesture):
 		candidates = self._get_app_key_candidates()
@@ -742,7 +786,13 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			nvda_gui.mainFrame.prePopup()
 			from .gui import MarkerPickerDialog
 
-			d = MarkerPickerDialog(nvda_gui.mainFrame, items)
+			d = MarkerPickerDialog(
+				nvda_gui.mainFrame,
+				items,
+				marker_instance=self,
+				delete_callback=self._delete_marker_callback,
+				edit_callback=self._edit_marker_callback,
+			)
 			if d.ShowModal() == wx.ID_OK:
 				sig_hash = getattr(d, "selected_hash", None)
 				app_key = getattr(d, "selected_app_key", None)
@@ -759,34 +809,29 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
 		wx.CallAfter(run_picker_dialog)
 
-	@script(
-		description="Arms capture for the next mouse click so a sighted user can click an element to mark.",
-		gesture="kb:NVDA+windows+c",
-	)
-	def script_armClickCapture(self, gesture):
-		if self._capture_next_click:
-			self._capture_next_click = False
-			ui.message("Remote click capture canceled.")
-		else:
-			try:
-				mouse_tracking_enabled = config.conf["mouse"]["enableMouseTracking"]
-			except Exception:
-				mouse_tracking_enabled = True  # assume enabled if config key missing
-			if not mouse_tracking_enabled:
-				ui.message(
-					"Mouse tracking is disabled. "
-					"Please enable it under NVDA Preferences, Mouse settings, "
-					"then try again."
-				)
-				return
-			self._capture_next_click = True
-			ui.message("Remote click capture armed. Click an element now.")
-
 	def _delete_marker_callback(self, app_key: str, sig_hash: str):
 		if self._store.delete_marker(app_key, sig_hash):
 			self._save_store()
 			self._bind_saved_shortcuts()
 			log.debugWarning(f"REM deleted marker {sig_hash} for {app_key}")
+
+	def _edit_marker_callback(self, app_key: str, sig_hash: str, new_name: str, new_shortcut: str):
+		"""
+		Update an existing marker's friendly name and shortcut in place.
+		The element signature (hash, backend, primarySignature, etc.) is preserved —
+		only the user-facing fields are overwritten.
+		"""
+		marker = self._store.get_marker(app_key, sig_hash)
+		if not marker:
+			log.error(f"REM edit: marker not found app_key={app_key}, hash={sig_hash}")
+			return
+		normalized = normalize_shortcut(new_shortcut) if new_shortcut else ""
+		marker["friendlyName"] = new_name
+		marker["shortcut"] = normalized
+		self._store.set_marker(app_key, sig_hash, marker)
+		self._save_store()
+		self._bind_saved_shortcuts()
+		log.debugWarning(f"REM edited marker {sig_hash}: name={new_name!r}, shortcut={normalized!r}")
 
 	def _get_browse_root(self):
 		"""
@@ -838,24 +883,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			nvda_gui.mainFrame.postPopup()
 
 		wx.CallAfter(run_dialog)
-
-	def event_mouseDown(self, obj, nextHandler):
-		if self._capture_next_click:
-			self._capture_next_click = False
-			# obj can be None on some NVDA versions; fall back to api.getMouseObject()
-			if not obj:
-				try:
-					obj = api.getMouseObject()
-				except Exception:
-					obj = None
-			if obj:
-				queueHandler.queueFunction(
-					queueHandler.eventQueue, lambda: self._beginMarkingProcess(obj, "MouseClick")
-				)
-			else:
-				ui.message("No object found at click.")
-		if nextHandler:
-			nextHandler()
 
 	def _find_same_doc_shortcut_conflict(self, shortcut: str, app_key: str, sig_hash: str):
 		"""

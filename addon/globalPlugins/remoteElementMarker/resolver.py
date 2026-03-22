@@ -1,25 +1,14 @@
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict, Optional, Callable, Tuple
 
 from logHandler import log  # type: ignore
+
+_CONTEXT_CHARS = 60
 
 
 def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) -> None:
 	"""
 	Searches for the element using primary signature.
 	Must be called from NVDA's main thread.
-
-	Because COM accessibility objects (IAccessible, UIA, Chrome virtual buffer)
-	are apartment-threaded they can only be accessed from the main thread.
-	Running the walk on a background thread silently returns None for every
-	child/property access, which is why previous threading attempts failed.
-
-	To avoid freezing NVDA we walk the tree in small incremental chunks,
-	yielding back to the main thread's wx event loop between each chunk via
-	wx.CallLater(0, ...).  This keeps NVDA responsive while still doing a
-	full unlimited-depth search.
-
-	on_done(result) is called on the main thread when the walk finishes.
-	result is the matched NVDAObject or None.
 	"""
 	import wx  # type: ignore
 
@@ -41,16 +30,14 @@ def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) ->
 			on_done(result)
 			return
 
-	# BrowseMode fast path: fetch all virtual-buffer objects in one batch call
-	# via getTextWithFields(). This avoids per-node COM round-trips to Chrome/Firefox
-	# and is typically 10-50x faster than tree-walking for browser content.
+	# BrowseMode: walk the virtual buffer tree to find by role_index + name.
 	if backend == "BrowseMode":
-		result = _browsemode_batch_resolve(primary, root_obj)
+		result = _browsemode_resolve(primary, root_obj)
 		if result is not None:
-			log.debugWarning("REM BrowseMode batch resolve succeeded.")
+			log.debugWarning("REM BrowseMode resolve succeeded.")
 			on_done(result)
 			return
-		log.warning("REM BrowseMode batch resolve found no match; falling back to chunked tree walk.")
+		log.warning("REM BrowseMode resolve found no match; falling back to chunked tree walk.")
 
 	# UIA/IAccessible (and BrowseMode fallback): chunked tree walk on main thread.
 	walker = _tree_walk_iter(backend, primary, root_obj)
@@ -58,100 +45,165 @@ def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) ->
 
 
 # ------------------------------------------------------------------ #
-# BrowseMode batch resolve via getTextWithFields                      #
+# BrowseMode resolve via tree walk                                    #
 # ------------------------------------------------------------------ #
 
-def _browsemode_batch_resolve(primary: Dict[str, Any], root_obj) -> Optional[Any]:
+def _browsemode_resolve(primary: Dict[str, Any], root_obj) -> Optional[Any]:
 	"""
-	Fetches all embedded objects from the virtual buffer in a single
-	getTextWithFields() call, then matches in pure Python with no further
-	COM round-trips.  Typically 10-50x faster than node-by-node tree walk
-	for browser content because Chrome/Firefox batch the entire document
-	into one response.
+	Resolve a BrowseMode element by walking the virtual buffer tree.
+
+	Matching priority:
+	  1. role_index — 0-based count of same-role+name elements in tree order,
+	                  computed identically at mark time and resolve time.
+	  2. context    — surrounding document text, fallback for dynamic pages
+	                  where insertions above the element shifted role_index.
+	  3. single candidate — if only one element matches role+name, return it.
 	"""
 	try:
-		import textInfos  # type: ignore
-		from NVDAObjects import NVDAObject  # type: ignore
-
 		ti = getattr(root_obj, "treeInterceptor", None) or (
-			root_obj if hasattr(root_obj, "makeTextInfo") else None
+			root_obj if hasattr(root_obj, "rootNVDAObject") else None
 		)
-		if ti is None or not getattr(ti, "isReady", False):
-			log.warning("REM batch resolve: no ready treeInterceptor.")
-			return None
 
-		# Verify URL before fetching the whole document.
+		# Verify URL.
 		target_url = primary.get("url_if_web", "") or ""
 		if target_url:
-			doc_id = str(getattr(ti, "documentConstantIdentifier", "") or "")
+			doc_id = str(getattr(ti, "documentConstantIdentifier", "") or "") if ti else ""
 			if doc_id and doc_id != target_url:
-				log.warning(f"REM batch resolve: URL mismatch (stored={target_url!r}, current={doc_id!r}).")
+				log.warning("REM BrowseMode resolve: URL mismatch.")
 				return None
 
-		info = ti.makeTextInfo(textInfos.POSITION_ALL)
-		fields = info.getTextWithFields()
+		target_role = primary.get("role")
+		target_name = (primary.get("name", "") or "").strip()
+		stored_index = primary.get("role_index", -1)
+		stored_before = primary.get("context_before", "")
+		stored_after = primary.get("context_after", "")
 
-		seen_ids = set()
-		matched = 0
-		for field in fields:
-			# Fields are a mix of strings and FieldCommand objects.
-			# We only care about FieldCommand("controlStart", ...) which carry NVDAObjects.
-			if not isinstance(field, textInfos.FieldCommand):
-				continue
-			if field.command != "controlStart":
-				continue
-			obj = field.field.get("_startOfNode") or None
-			if obj is None:
-				# Fall back: some browse-mode implementations store the object differently.
-				obj = field.field.get("obj") or None
-			if not isinstance(obj, NVDAObject):
-				continue
-			oid = id(obj)
-			if oid in seen_ids:
-				continue
-			seen_ids.add(oid)
-			matched += 1
-			if _match_browsemode(obj, primary):
-				log.debugWarning(f"REM batch resolve: matched after checking {matched} objects.")
-				return obj
+		# Get the document root.
+		root = getattr(ti, "rootNVDAObject", None) if ti else None
+		if root is None:
+			root = root_obj
 
-		log.debugWarning(f"REM batch resolve: no match after {matched} objects from getTextWithFields.")
+		# Walk tree collecting all same-role+name candidates with their
+		# role_index (count of same-role elements seen before each one).
+		role_counter = 0   # counts ALL same-role elements (including different names)
+		name_counter = 0   # counts same-role+name elements only
+		stack = [root]
+		visited = set()
+		candidates = []  # list of (name_index, role_index_overall, node)
+
+		while stack:
+			node = stack.pop()
+			if node is None:
+				continue
+			nid = id(node)
+			if nid in visited:
+				continue
+			visited.add(nid)
+
+			if node.role == target_role:
+				node_name = (getattr(node, "name", "") or "").strip()
+				if node_name == target_name:
+					candidates.append((name_counter, role_counter, node))
+					name_counter += 1
+				role_counter += 1
+
+			children = []
+			try:
+				child = node.firstChild
+				while child:
+					children.append(child)
+					try:
+						child = child.next
+					except Exception:
+						break
+			except Exception:
+				pass
+			for child in reversed(children):
+				stack.append(child)
+
+		log.debugWarning(
+			f"REM BrowseMode resolve: {len(candidates)} name-matching candidates, "
+			f"stored_index={stored_index}, role_counter_total={role_counter}"
+		)
+
+		if not candidates:
+			return None
+
+		# 1. Match by role_index (= name_counter value at mark time).
+		if stored_index >= 0:
+			for name_idx, role_idx, node in candidates:
+				if name_idx == stored_index:
+					log.debugWarning(f"REM resolved by name_index={name_idx}")
+					return node
+
+		# 2. Context fallback for dynamic pages.
+		if stored_before or stored_after:
+			try:
+				import textInfos  # type: ignore
+				full_info = ti.makeTextInfo(textInfos.POSITION_ALL)
+				full_text = full_info.getText()
+				for name_idx, role_idx, node in candidates:
+					obj_offset = _get_obj_text_offset(node, ti)
+					if obj_offset < 0:
+						continue
+					before = full_text[max(0, obj_offset - _CONTEXT_CHARS): obj_offset].strip()
+					after = full_text[obj_offset: obj_offset + _CONTEXT_CHARS].strip()
+					ctx_ok = True
+					if stored_before and stored_before not in before and before not in stored_before:
+						ctx_ok = False
+					if stored_after and stored_after not in after and after not in stored_after:
+						ctx_ok = False
+					if ctx_ok:
+						log.debugWarning(f"REM resolved by context at name_idx={name_idx}")
+						return node
+			except Exception as e:
+				log.debugWarning(f"REM context fallback exception: {e}")
+
+		# 3. Single candidate.
+		if len(candidates) == 1:
+			log.debugWarning("REM resolved: only one name-matching candidate.")
+			return candidates[0][2]
+
+		log.warning(f"REM BrowseMode resolve: no match among {len(candidates)} candidates.")
 		return None
+
 	except Exception as e:
-		log.warning(f"REM batch resolve exception: {e}")
+		log.warning(f"REM BrowseMode resolve exception: {e}")
 		return None
+
+
+def _get_obj_text_offset(obj, ti) -> int:
+	"""Return the character offset of obj within the document text, or -1."""
+	try:
+		import textInfos  # type: ignore
+		obj_info = obj.makeTextInfo(textInfos.POSITION_FIRST)
+		start_info = ti.makeTextInfo(textInfos.POSITION_FIRST)
+		range_info = start_info.copy()
+		range_info.setEndPoint(obj_info, "endToStart")
+		return len(range_info.getText())
+	except Exception:
+		return -1
 
 
 # ------------------------------------------------------------------ #
 # Chunked walker driver                                               #
 # ------------------------------------------------------------------ #
 
-# How many nodes to visit per main-thread timeslice.
-# ~50 nodes takes < 1ms on native apps and < 50ms on Chrome, keeping
-# NVDA's speech/input latency imperceptible.
 _CHUNK_SIZE = 50
 
 
 def _drive_walk(walker, on_done: Callable) -> None:
-	"""
-	Pulls up to _CHUNK_SIZE nodes from the walker on the main thread,
-	then schedules itself again via wx.CallLater(0) so the wx event loop
-	gets a turn between chunks.  Calls on_done when finished.
-	"""
 	import wx  # type: ignore
 
 	try:
 		for _ in range(_CHUNK_SIZE):
 			result = next(walker)
 			if result is not None:
-				# Found it.
 				log.debugWarning(f"REM walk found match: {result!r}")
 				on_done(result)
 				return
-		# Chunk exhausted, no match yet — yield to event loop and continue.
 		wx.CallLater(0, _drive_walk, walker, on_done)
 	except StopIteration:
-		# Walk finished with no match.
 		log.warning("REM tree walk: exhausted all nodes, no match found.")
 		on_done(None)
 
@@ -161,12 +213,7 @@ def _drive_walk(walker, on_done: Callable) -> None:
 # ------------------------------------------------------------------ #
 
 def _tree_walk_iter(backend: str, primary: Dict[str, Any], root_obj):
-	"""
-	Generator that yields None for each non-matching node visited,
-	and yields the matching object when found, then returns.
-	Iterative DFS so there is no Python recursion limit.
-	"""
-	log.debugWarning(f"REM tree walk iter start: backend={backend}, primary={primary}")
+	log.debugWarning(f"REM tree walk iter start: backend={backend}")
 
 	visited = 0
 	stack = [root_obj]
@@ -183,7 +230,6 @@ def _tree_walk_iter(backend: str, primary: Dict[str, Any], root_obj):
 			yield obj
 			return
 
-		# Collect children and push in reverse order (first child processed first).
 		children = []
 		try:
 			child = obj.firstChild
@@ -199,7 +245,7 @@ def _tree_walk_iter(backend: str, primary: Dict[str, Any], root_obj):
 		for child in reversed(children):
 			stack.append(child)
 
-		yield None  # Yield control back after each node.
+		yield None
 
 	log.warning(f"REM tree walk: no match after {visited} nodes.")
 
@@ -228,7 +274,7 @@ def _uia_fast_path(runtime_id) -> Optional[Any]:
 
 
 # ------------------------------------------------------------------ #
-# Match predicates                                                    #
+# Match predicates (tree-walk fallback path)                         #
 # ------------------------------------------------------------------ #
 
 def _matches(backend: str, primary: Dict[str, Any], obj) -> bool:
@@ -238,7 +284,7 @@ def _matches(backend: str, primary: Dict[str, Any], obj) -> bool:
 		elif backend == "IAccessible":
 			return _match_iaccessible(obj, primary)
 		elif backend == "BrowseMode":
-			return _match_browsemode(obj, primary)
+			return _match_browsemode_simple(obj, primary)
 	except Exception:
 		pass
 	return False
@@ -268,20 +314,17 @@ def _match_iaccessible(obj, primary: Dict[str, Any]) -> bool:
 	return True
 
 
-def _match_browsemode(obj, primary: Dict[str, Any]) -> bool:
+def _match_browsemode_simple(obj, primary: Dict[str, Any]) -> bool:
+	"""
+	Tree-walk fallback: role + name only. Only runs if _browsemode_resolve
+	fails (e.g. no treeInterceptor). Approximate but better than nothing.
+	"""
 	if obj.role != primary.get("role"):
 		return False
-	if "states" in primary:
-		try:
-			required = set(primary["states"])
-			if not required.issubset(set(obj.states)):
-				return False
-		except Exception:
-			pass
-	name_hint = primary.get("name", "")
-	if name_hint:
-		if (getattr(obj, "name", "") or "").strip() != name_hint.strip():
-			return False
+	name_hint = (primary.get("name", "") or "").strip()
+	obj_name = (getattr(obj, "name", "") or "").strip()
+	if obj_name != name_hint:
+		return False
 	url_hint = primary.get("url_if_web", "")
 	if url_hint:
 		ti = getattr(obj, "treeInterceptor", None)
