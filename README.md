@@ -13,12 +13,8 @@
 - Create subfolders like `appModules` or `globalPlugins` inside scratchpad if those directories not available.
 - Copy the `remoteElementMarker` directory present in `addon/globalPlugins/` from our repo to `../scratchpad/globalPlugins/` directory.
 
-## Testing Steps
+## Testing
 
-- Restart NVDA or select Tools > Reload Plugins (NVDA + Ctrl + F3).
-- Check NVDA log from "NVDA Preferences > Tools > View log (NVDA + F1)" for loading confirmation/errors like "loading from scratchpad".
-- On successful loading of code you can find "CustomRemoteGesture add-on loaded" in the logs.
-- Verify functionality: Open the target app (e.g., Chrome)
-  - Keyboard Capture: Navigate to the element using keyboard, then press `NVDA + Windows + n` to capture element.
-  - Mouse Capture: Hover over the element using mouse then press `NVDA + Windows + m` to capture element.
-  - Click Capture: Press `NVDA + Windows + c` then click the element to be captured. To cancel the capture press the same key bindings again.
+Follow the steps in the Remote Element Marker — User Guide, specifically from 'Marking an Element' section, to verify functionality.
+
+
