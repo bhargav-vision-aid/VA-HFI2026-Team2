@@ -212,30 +212,3 @@ reportMissingTypeStubs = false
 
 # Bad rules
 # These are sorted alphabetically and should be enabled and moved to compliant rules section when resolved.
-
-# Pytest configuration
-[tool.pytest]
-testpaths = ["tests"]
-python_files = "test_*.py"
-python_classes = "Test*"
-python_functions = "test_*"
-addopts = "-ra -q"
-
-# Coverage configuration
-[tool.coverage.run]
-source = ["addon"]
-omit = [
-	"*/tests/*",
-	"*/test_*",
-	"*/__pycache__/*",
-	"*/.venv/*",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-	"pragma: no cover",
-	"def __repr__",
-	"raise NotImplementedError",
-	"if __name__ == .__main__.:",
-	"if TYPE_CHECKING:",
-]
