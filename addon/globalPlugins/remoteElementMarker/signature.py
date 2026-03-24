@@ -1,9 +1,9 @@
 import hashlib
 import json
+import time
 from typing import Any, Dict
 
-_CONTEXT_CHARS = 60
-
+from logHandler import log  # type: ignore
 
 def _compute_position_hints(obj, ti) -> Dict[str, Any]:
 	"""
@@ -46,6 +46,9 @@ def _compute_position_hints(obj, ti) -> Dict[str, Any]:
 		stack = [root]
 		visited = set()
 		doc_order_pos = 0  # approximate char offset via element count
+		timeout_seconds = float("inf")
+		start_time = time.monotonic()
+		timed_out = False
 
 		while stack:
 			node = stack.pop()
@@ -55,6 +58,11 @@ def _compute_position_hints(obj, ti) -> Dict[str, Any]:
 			if nid in visited:
 				continue
 			visited.add(nid)
+
+			if time.monotonic() - start_time > timeout_seconds:
+				log.debugWarning("REM _compute_position_hints: timeout, returning fallback")
+				timed_out = True
+				break
 
 			if node.role == target_role:
 				node_name = (getattr(node, "name", "") or "").strip()
@@ -79,6 +87,9 @@ def _compute_position_hints(obj, ti) -> Dict[str, Any]:
 			try:
 				child = node.firstChild
 				while child:
+					if time.monotonic() - start_time > timeout_seconds:
+						timed_out = True
+						break
 					children.append(child)
 					try:
 						child = child.next
@@ -90,24 +101,15 @@ def _compute_position_hints(obj, ti) -> Dict[str, Any]:
 				stack.append(child)
 
 		# If location match failed, fall back to positional index by tree order.
-		if found_index < 0:
+		# Skip fallback if we timed out - another tree walk would also be slow.
+		if found_index < 0 and not timed_out:
 			found_index = _count_by_tree_order(obj, ti, target_role, target_name)
 
-		# Get context text using document TextInfo.
+		# Resolver will handle fallback via role_index or tree walk when needed.
+		# Context based approach for future solution
 		context_before = ""
 		context_after = ""
-		try:
-			import textInfos  # type: ignore
-			full_info = ti.makeTextInfo(textInfos.POSITION_ALL)
-			full_text = full_info.getText()
-			if full_text:
-				obj_offset = _get_obj_offset(obj, ti)
-				if obj_offset >= 0:
-					context_before = full_text[max(0, obj_offset - _CONTEXT_CHARS): obj_offset].strip()
-					context_after = full_text[obj_offset: obj_offset + _CONTEXT_CHARS].strip()
-		except Exception:
-			pass
-
+		
 		return {
 			"role_index": found_index,
 			"context_before": context_before,
@@ -117,11 +119,12 @@ def _compute_position_hints(obj, ti) -> Dict[str, Any]:
 	except Exception:
 		return {"role_index": -1, "context_before": "", "context_after": ""}
 
-
+# Context based approach for future solution
 def _get_obj_offset(obj, ti) -> int:
 	"""Return char offset of obj within the document text, or -1."""
 	try:
 		import textInfos  # type: ignore
+
 		obj_info = obj.makeTextInfo(textInfos.POSITION_FIRST)
 		start_info = ti.makeTextInfo(textInfos.POSITION_FIRST)
 		range_info = start_info.copy()
@@ -146,6 +149,8 @@ def _count_by_tree_order(obj, ti, target_role: int, target_name: str) -> int:
 		counter = 0
 		stack = [root]
 		visited = set()
+		timeout_seconds = float("inf")
+		start_time = time.monotonic()
 
 		while stack:
 			node = stack.pop()
@@ -155,6 +160,10 @@ def _count_by_tree_order(obj, ti, target_role: int, target_name: str) -> int:
 			if nid in visited:
 				continue
 			visited.add(nid)
+
+			if time.monotonic() - start_time > timeout_seconds:
+				log.debugWarning("REM _count_by_tree_order: timeout, returning -1")
+				break
 
 			if node.role == target_role:
 				node_name = (getattr(node, "name", "") or "").strip()
@@ -167,6 +176,9 @@ def _count_by_tree_order(obj, ti, target_role: int, target_name: str) -> int:
 			try:
 				child = node.firstChild
 				while child:
+					if time.monotonic() - start_time > timeout_seconds:
+						log.debugWarning("REM _count_by_tree_order: inner loop timeout")
+						break
 					children.append(child)
 					try:
 						child = child.next
