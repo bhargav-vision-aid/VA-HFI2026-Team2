@@ -1,8 +1,16 @@
-from typing import Any, Dict, Optional, Callable, Tuple
+import time
+from typing import Any, Dict, Optional, Callable
 
 from logHandler import log  # type: ignore
 
-_CONTEXT_CHARS = 60
+_TIMING_ENABLED = True
+
+
+def _log_timing(method: str, elapsed_ms: float, **kwargs) -> None:
+	if not _TIMING_ENABLED:
+		return
+	extras = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+	log.debugWarning(f"REM Timing: {method} took {elapsed_ms:.2f}ms{extras and ', ' + extras}")
 
 
 def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) -> None:
@@ -10,7 +18,6 @@ def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) ->
 	Searches for the element using primary signature.
 	Must be called from NVDA's main thread.
 	"""
-	import wx  # type: ignore
 
 	backend = marker_data.get("backend")
 	primary = marker_data.get("primarySignature", {})
@@ -24,7 +31,10 @@ def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) ->
 
 	# UIA: try runtimeId fast-path first — completely synchronous and fast.
 	if backend == "UIA" and fast_path.get("runtimeId"):
+		t0 = time.perf_counter()
 		result = _uia_fast_path(fast_path["runtimeId"])
+		elapsed = (time.perf_counter() - t0) * 1000
+		_log_timing("UIA_fast_path", elapsed, result=result is not None)
 		if result:
 			log.debugWarning("REM UIA runtimeId fast-path succeeded.")
 			on_done(result)
@@ -32,7 +42,10 @@ def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) ->
 
 	# BrowseMode: walk the virtual buffer tree to find by role_index + name.
 	if backend == "BrowseMode":
+		t0 = time.perf_counter()
 		result = _browsemode_resolve(primary, root_obj)
+		elapsed = (time.perf_counter() - t0) * 1000
+		_log_timing("BrowseMode", elapsed, result=result is not None)
 		if result is not None:
 			log.debugWarning("REM BrowseMode resolve succeeded.")
 			on_done(result)
@@ -40,13 +53,15 @@ def resolve_element(marker_data: Dict[str, Any], root_obj, on_done: Callable) ->
 		log.warning("REM BrowseMode resolve found no match; falling back to chunked tree walk.")
 
 	# UIA/IAccessible (and BrowseMode fallback): chunked tree walk on main thread.
+	t0 = time.perf_counter()
 	walker = _tree_walk_iter(backend, primary, root_obj)
-	_drive_walk(walker, on_done)
+	_drive_walk(walker, on_done, start_time=t0)
 
 
 # ------------------------------------------------------------------ #
 # BrowseMode resolve via tree walk                                    #
 # ------------------------------------------------------------------ #
+
 
 def _browsemode_resolve(primary: Dict[str, Any], root_obj) -> Optional[Any]:
 	"""
@@ -85,8 +100,8 @@ def _browsemode_resolve(primary: Dict[str, Any], root_obj) -> Optional[Any]:
 
 		# Walk tree collecting all same-role+name candidates with their
 		# role_index (count of same-role elements seen before each one).
-		role_counter = 0   # counts ALL same-role elements (including different names)
-		name_counter = 0   # counts same-role+name elements only
+		role_counter = 0  # counts ALL same-role elements (including different names)
+		name_counter = 0  # counts same-role+name elements only
 		stack = [root]
 		visited = set()
 		candidates = []  # list of (name_index, role_index_overall, node)
@@ -136,30 +151,8 @@ def _browsemode_resolve(primary: Dict[str, Any], root_obj) -> Optional[Any]:
 					log.debugWarning(f"REM resolved by name_index={name_idx}")
 					return node
 
-		# 2. Context fallback for dynamic pages.
-		if stored_before or stored_after:
-			try:
-				import textInfos  # type: ignore
-				full_info = ti.makeTextInfo(textInfos.POSITION_ALL)
-				full_text = full_info.getText()
-				for name_idx, role_idx, node in candidates:
-					obj_offset = _get_obj_text_offset(node, ti)
-					if obj_offset < 0:
-						continue
-					before = full_text[max(0, obj_offset - _CONTEXT_CHARS): obj_offset].strip()
-					after = full_text[obj_offset: obj_offset + _CONTEXT_CHARS].strip()
-					ctx_ok = True
-					if stored_before and stored_before not in before and before not in stored_before:
-						ctx_ok = False
-					if stored_after and stored_after not in after and after not in stored_after:
-						ctx_ok = False
-					if ctx_ok:
-						log.debugWarning(f"REM resolved by context at name_idx={name_idx}")
-						return node
-			except Exception as e:
-				log.debugWarning(f"REM context fallback exception: {e}")
 
-		# 3. Single candidate.
+		# 2. Single candidate.
 		if len(candidates) == 1:
 			log.debugWarning("REM resolved: only one name-matching candidate.")
 			return candidates[0][2]
@@ -172,19 +165,6 @@ def _browsemode_resolve(primary: Dict[str, Any], root_obj) -> Optional[Any]:
 		return None
 
 
-def _get_obj_text_offset(obj, ti) -> int:
-	"""Return the character offset of obj within the document text, or -1."""
-	try:
-		import textInfos  # type: ignore
-		obj_info = obj.makeTextInfo(textInfos.POSITION_FIRST)
-		start_info = ti.makeTextInfo(textInfos.POSITION_FIRST)
-		range_info = start_info.copy()
-		range_info.setEndPoint(obj_info, "endToStart")
-		return len(range_info.getText())
-	except Exception:
-		return -1
-
-
 # ------------------------------------------------------------------ #
 # Chunked walker driver                                               #
 # ------------------------------------------------------------------ #
@@ -192,18 +172,23 @@ def _get_obj_text_offset(obj, ti) -> int:
 _CHUNK_SIZE = 50
 
 
-def _drive_walk(walker, on_done: Callable) -> None:
+def _drive_walk(walker, on_done: Callable, nodes_visited: int = 0, start_time: float = 0) -> None:
 	import wx  # type: ignore
 
 	try:
 		for _ in range(_CHUNK_SIZE):
 			result = next(walker)
+			nodes_visited += 1
 			if result is not None:
-				log.debugWarning(f"REM walk found match: {result!r}")
+				elapsed = (time.perf_counter() - start_time) * 1000
+				_log_timing("chunked_tree_walk", elapsed, nodes=nodes_visited, result=True)
+				log.debugWarning(f"REM walk resolved found match: {result!r}")
 				on_done(result)
 				return
-		wx.CallLater(0, _drive_walk, walker, on_done)
+		wx.CallLater(0, _drive_walk, walker, on_done, nodes_visited, start_time)
 	except StopIteration:
+		elapsed = (time.perf_counter() - start_time) * 1000
+		_log_timing("chunked_tree_walk", elapsed, nodes=nodes_visited, result=False)
 		log.warning("REM tree walk: exhausted all nodes, no match found.")
 		on_done(None)
 
@@ -211,6 +196,7 @@ def _drive_walk(walker, on_done: Callable) -> None:
 # ------------------------------------------------------------------ #
 # Tree walk generator                                                 #
 # ------------------------------------------------------------------ #
+
 
 def _tree_walk_iter(backend: str, primary: Dict[str, Any], root_obj):
 	log.debugWarning(f"REM tree walk iter start: backend={backend}")
@@ -254,19 +240,24 @@ def _tree_walk_iter(backend: str, primary: Dict[str, Any], root_obj):
 # UIA runtimeId fast-path                                             #
 # ------------------------------------------------------------------ #
 
+
 def _uia_fast_path(runtime_id) -> Optional[Any]:
 	try:
 		import UIAHandler  # type: ignore
+
 		if not UIAHandler.handler:
 			return None
 		condition = UIAHandler.handler.clientObject.CreatePropertyCondition(
-			UIAHandler.UIA_RuntimeIdPropertyId, runtime_id,
+			UIAHandler.UIA_RuntimeIdPropertyId,
+			runtime_id,
 		)
 		found = UIAHandler.handler.rootElement.FindFirst(
-			UIAHandler.TreeScope_Subtree, condition,
+			UIAHandler.TreeScope_Subtree,
+			condition,
 		)
 		if found:
 			import NVDAObjects.UIA as UIA_module  # type: ignore
+
 			return UIA_module.UIA(UIAElement=found)
 	except Exception as e:
 		log.debugWarning(f"REM UIA fast-path exception: {e}")
@@ -276,6 +267,7 @@ def _uia_fast_path(runtime_id) -> Optional[Any]:
 # ------------------------------------------------------------------ #
 # Match predicates (tree-walk fallback path)                         #
 # ------------------------------------------------------------------ #
+
 
 def _matches(backend: str, primary: Dict[str, Any], obj) -> bool:
 	try:
