@@ -16,6 +16,8 @@ class RemoteElementMarkerSettingsPanel(SettingsPanel):
 		sHelper = gui.guiHelper.BoxSizerHelper(self, sizer=sizer)
 		desc = wx.StaticText(self, label=self.panelDescription)
 		sHelper.addItem(desc)
+
+		# --- Announce labels ---
 		self.announceLabels = sHelper.addItem(
 			wx.CheckBox(self, label="Announce custom labels when navigating elements")
 		)
@@ -28,17 +30,54 @@ class RemoteElementMarkerSettingsPanel(SettingsPanel):
 		)
 		sHelper.addItem(wx.StaticText(self, label=note))
 
+		# --- Audio beeps ---
+		self.beepEnabled = sHelper.addItem(
+			wx.CheckBox(self, label="Play audio beeps for save and resolve feedback")
+		)
+		self.beepEnabled.SetValue(
+			bool(config.conf["remoteElementMarker"]["beepEnabled"])
+		)
+		beepNote = (
+			"When enabled, a high-pitch beep indicates success and a low-pitch beep "
+			"indicates failure. A repeating mid-pitch beep plays while resolving an element."
+		)
+		sHelper.addItem(wx.StaticText(self, label=beepNote))
+
+		# --- Activate after resolve ---
+		self.activateAfterResolve = sHelper.addItem(
+			wx.CheckBox(self, label="Activate element after resolving to it")
+		)
+		self.activateAfterResolve.SetValue(
+			bool(config.conf["remoteElementMarker"]["activateAfterResolve"])
+		)
+		activateNote = (
+			"When enabled, resolving a marker moves to the element and triggers it. "
+			"When disabled, Remote Element Marker only moves focus or browse position to the element."
+		)
+		sHelper.addItem(wx.StaticText(self, label=activateNote))
+
 	def onSave(self):
-		now_enabled = self.announceLabels.IsChecked()
+		now_announce = self.announceLabels.IsChecked()
+		now_beep = self.beepEnabled.IsChecked()
+		now_activate = self.activateAfterResolve.IsChecked()
 
 		# Persist to config first, unconditionally.
 		try:
-			config.conf["remoteElementMarker"]["announceLabels"] = now_enabled
+			config.conf["remoteElementMarker"]["announceLabels"] = now_announce
 		except Exception as e:
-			log.error(f"REM settings: failed to save config: {e}")
+			log.error(f"REM settings: failed to save announceLabels config: {e}")
 
-		# Find the running plugin instance and apply the change live,
-		# mirroring exactly what script_toggleAnnounceLabels does.
+		try:
+			config.conf["remoteElementMarker"]["beepEnabled"] = now_beep
+		except Exception as e:
+			log.error(f"REM settings: failed to save beepEnabled config: {e}")
+
+		try:
+			config.conf["remoteElementMarker"]["activateAfterResolve"] = now_activate
+		except Exception as e:
+			log.error(f"REM settings: failed to save activateAfterResolve config: {e}")
+
+		# Find the running plugin instance and apply changes live.
 		try:
 			import globalPluginHandler  # type: ignore
 			for plugin in globalPluginHandler.runningTable.values():
@@ -49,26 +88,29 @@ class RemoteElementMarkerSettingsPanel(SettingsPanel):
 				):
 					continue
 
-				was_enabled = plugin._announce_enabled
-				if now_enabled == was_enabled:
-					# No change — nothing to do.
-					break
+				# Apply announce-labels change.
+				was_announce = plugin._announce_enabled
+				if now_announce != was_announce:
+					plugin._announce_enabled = now_announce
+					if now_announce:
+						try:
+							plugin._schedule_nav_monitor_tick()
+						except Exception as e:
+							log.error(f"REM settings: failed to start nav monitor: {e}")
+					else:
+						try:
+							plugin._stop_nav_monitor()
+							plugin._current_nav_marker_key = None
+						except Exception as e:
+							log.error(f"REM settings: failed to stop nav monitor: {e}")
 
-				# Update the cached flag first so any event that fires
-				# during timer start/stop sees the correct state.
-				plugin._announce_enabled = now_enabled
+				# Apply beep change (simple flag update).
+				if hasattr(plugin, "_beep_enabled"):
+					plugin._beep_enabled = now_beep
 
-				if now_enabled:
-					try:
-						plugin._schedule_nav_monitor_tick()
-					except Exception as e:
-						log.error(f"REM settings: failed to start nav monitor: {e}")
-				else:
-					try:
-						plugin._stop_nav_monitor()
-						plugin._current_nav_marker_key = None
-					except Exception as e:
-						log.error(f"REM settings: failed to stop nav monitor: {e}")
+				if hasattr(plugin, "_activate_after_resolve"):
+					plugin._activate_after_resolve = now_activate
+
 				break
 		except Exception as e:
 			log.error(f"REM settings: failed to apply live plugin state: {e}")

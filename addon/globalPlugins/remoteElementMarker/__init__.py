@@ -1,6 +1,6 @@
 # -*- coding: UTF-8 -*-
 # Remote Element Marker
-# Copyright (C) 2025 Team 2
+# Copyright (C) 2026 Team 2
 # Released under GPL 2
 
 from typing import Dict, Any, Optional, List
@@ -25,11 +25,12 @@ from gui.settingsDialogs import NVDASettingsDialog  # type: ignore
 import textInfos  # type: ignore
 
 from .gui import MarkerDialog
-from .storage import MarkerStore
-from .signature import generate_signature, generate_signature_for_lookup
+from .storage import MarkerStore, is_stable_document_identifier
+from .signature import generate_signature, generate_signature_for_lookup, generate_signature_async
 from .resolver import resolve_element
 from .bindings import normalize_shortcut
 from .settings import RemoteElementMarkerSettingsPanel
+from .beep import beep_success, beep_failure, ProgressBeeper
 
 # addonHandler.initTranslation()
 
@@ -70,6 +71,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# Cache the enabled state as a plain boolean so every event handler
 		# checks one attribute instead of reading from config each time.
 		self._announce_enabled = self._load_announce_enabled()
+		# Cache beep enabled state — read once at startup, updated live from settings.
+		self._beep_enabled = self._load_beep_enabled()
+		# Cache whether resolve should trigger the target after navigation.
+		self._activate_after_resolve = self._load_activate_after_resolve()
+		# Active progress beeper for the current resolve operation (if any).
+		self._progress_beeper: Optional[ProgressBeeper] = None
 		self._register_settings_panel()
 		self._bind_saved_shortcuts()
 		if self._announce_enabled:
@@ -115,6 +122,68 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	def _get_app_key(self, obj) -> str:
 		return self._store.get_app_key(obj)
 
+	def _get_storage_app_key(self, obj, signature: Optional[Dict[str, Any]] = None) -> str:
+		"""
+		Choose the storage bucket that best matches the captured signature.
+
+		Hybrid Chromium BrowseMode captures may come from a ChromiumUIA object whose
+		own treeInterceptor/app context does not match the active document-scoped key.
+		In that case prefer a live candidate whose doc id matches the signature URL.
+		"""
+		default_key = self._get_app_key(obj)
+		if not signature:
+			return default_key
+		if signature.get("backend") != "BrowseMode":
+			return default_key
+		target_url = (signature.get("primarySignature", {}) or {}).get("url_if_web", "") or ""
+		if not target_url:
+			return default_key
+		if not is_stable_document_identifier(target_url):
+			base_key = self._get_base_app_key(obj)
+			log.debugWarning(
+				f"REM storage app key: unstable target_url={target_url!r}, "
+				f"using base app key={base_key!r}"
+			)
+			return base_key
+		for candidate in self._get_app_key_candidates():
+			if "|doc:" not in candidate:
+				continue
+			doc_part = candidate.split("|doc:", 1)[1]
+			if doc_part == target_url:
+				log.debugWarning(
+					f"REM storage app key: using live doc candidate={candidate!r} "
+					f"for target_url={target_url!r} instead of default={default_key!r}"
+				)
+				return candidate
+		log.debugWarning(
+			f"REM storage app key: no doc candidate matched target_url={target_url!r}, "
+			f"falling back to default={default_key!r}"
+		)
+		return default_key
+
+	def _is_legacy_unstable_doc_key(self, app_key: str) -> bool:
+		if "|doc:" not in app_key:
+			return False
+		doc_part = app_key.split("|doc:", 1)[1].strip()
+		return not is_stable_document_identifier(doc_part)
+
+	def _app_key_matches_current_context(
+		self,
+		app_key: str,
+		candidate_set: set,
+		base_keys: set,
+		doc_keys: set,
+	) -> bool:
+		base = app_key.split("|doc:", 1)[0]
+		is_doc_scoped = "|doc:" in app_key
+		if not is_doc_scoped:
+			return app_key in candidate_set or base in base_keys
+		if app_key in doc_keys:
+			return True
+		if self._is_legacy_unstable_doc_key(app_key):
+			return base in base_keys
+		return False
+
 	def _format_app_name(self, app_key: str) -> str:
 		return app_key.split("|")[0]
 
@@ -154,26 +223,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		doc_keys = {c for c in candidates if "|doc:" in c}
 		items = []
 		for app_key, app_data in self._store.all_markers().items():
-			base = app_key.split("|doc:", 1)[0]
-			is_doc_scoped = "|doc:" in app_key
-
-			# If we have a current document context (typical browser case), only
-			# include markers for that exact document key. This prevents showing
-			# labels from other pages of the same browser/app module.
-			if is_doc_scoped:
-				if doc_keys and app_key not in doc_keys:
-					continue
-				# No active document context: hide document-scoped entries.
-				if not doc_keys:
-					continue
-			else:
-				# Non-document-scoped markers remain app-scoped.
-				if app_key not in candidate_set and base not in base_keys:
-					continue
+			if not self._app_key_matches_current_context(app_key, candidate_set, base_keys, doc_keys):
+				continue
 
 			for sig_hash, marker_data in app_data.get("markers", {}).items():
 				label = marker_data.get("friendlyName", "Unknown")
-				if "doc:" in app_key:
+				if "|doc:" in app_key and not self._is_legacy_unstable_doc_key(app_key):
 					label = f"{label} [{app_key.split('doc:', 1)[1]}]"
 				items.append(
 					{
@@ -197,6 +252,12 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			if "announceLabels" not in config.conf.spec["remoteElementMarker"]:
 				config.conf.spec["remoteElementMarker"]["announceLabels"] = "boolean(default=False)"
 			_ = config.conf["remoteElementMarker"]["announceLabels"]
+			if "beepEnabled" not in config.conf.spec["remoteElementMarker"]:
+				config.conf.spec["remoteElementMarker"]["beepEnabled"] = "boolean(default=True)"
+			_ = config.conf["remoteElementMarker"]["beepEnabled"]
+			if "activateAfterResolve" not in config.conf.spec["remoteElementMarker"]:
+				config.conf.spec["remoteElementMarker"]["activateAfterResolve"] = "boolean(default=True)"
+			_ = config.conf["remoteElementMarker"]["activateAfterResolve"]
 		except Exception:
 			pass
 
@@ -221,6 +282,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			log.debugWarning(f"Failed to unregister settings panel: {e}")
 
 	def terminate(self):
+		self._stop_progress_beeper()
 		self._stop_nav_monitor()
 		self._unregister_settings_panel()
 
@@ -231,6 +293,85 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			return bool(config.conf["remoteElementMarker"]["announceLabels"])
 		except Exception:
 			return False
+
+	def _load_beep_enabled(self) -> bool:
+		"""Read the beep-enabled state from config. Default is True."""
+		try:
+			return bool(config.conf["remoteElementMarker"]["beepEnabled"])
+		except Exception:
+			return True
+
+	def _load_activate_after_resolve(self) -> bool:
+		"""Read whether resolving should activate the target. Default is True."""
+		try:
+			return bool(config.conf["remoteElementMarker"]["activateAfterResolve"])
+		except Exception:
+			return True
+
+	def _move_to_browse_mode_target(self, obj) -> bool:
+		treeInterceptor = getattr(obj, "treeInterceptor", None)
+		if not (treeInterceptor and treeInterceptor.isReady and not treeInterceptor.passThrough):
+			return False
+		info = obj.makeTextInfo(textInfos.POSITION_FIRST)
+		info.collapse()
+		try:
+			set_selection = getattr(treeInterceptor, "_set_selection", None)
+			if callable(set_selection):
+				set_selection(info)
+				log.debugWarning("REM browse move: used treeInterceptor._set_selection().")
+			else:
+				treeInterceptor.selection = info
+				log.debugWarning("REM browse move: used treeInterceptor.selection.")
+		except Exception:
+			info.updateCaret()
+			log.debugWarning("REM browse move: used info.updateCaret().")
+		api.setReviewPosition(info, clearNavigatorObject=False, isCaret=True)
+		api.setNavigatorObject(obj)
+		try:
+			obj.scrollIntoView()
+		except Exception as e:
+			log.debugWarning(f"REM browse move: scrollIntoView failed: {e}")
+		return True
+
+	def _move_focus_to_target(self, obj, from_browse_mode: bool = False) -> bool:
+		try:
+			obj.setFocus()
+			api.setNavigatorObject(obj, isFocus=True)
+			log.debugWarning(
+				f"REM focus move: setFocus succeeded (from_browse_mode={from_browse_mode})."
+			)
+			return True
+		except Exception as e:
+			log.debugWarning(
+				f"REM focus move: setFocus failed (from_browse_mode={from_browse_mode}): {e}"
+			)
+			return False
+
+	# ------------------------------------------------------------------ #
+	# Progress beeper helpers                                             #
+	# ------------------------------------------------------------------ #
+
+	def _start_progress_beeper(self) -> None:
+		"""Start the progress beeper if beeps are enabled. Stops any running one first."""
+		self._stop_progress_beeper()
+		if not self._beep_enabled:
+			return
+		try:
+			self._progress_beeper = ProgressBeeper()
+			self._progress_beeper.start()
+		except Exception as e:
+			log.debugWarning(f"REM _start_progress_beeper error: {e}")
+			self._progress_beeper = None
+
+	def _stop_progress_beeper(self) -> None:
+		"""Stop and discard the active progress beeper."""
+		pb = self._progress_beeper
+		self._progress_beeper = None
+		if pb is not None:
+			try:
+				pb.stop()
+			except Exception:
+				pass
 
 	@script(
 		description="Toggle Remote Element Marker label announcements on or off.",
@@ -439,13 +580,18 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			return None
 
 		def _obj_from_text_info(ti_obj):
-			try:
-				caret_info = ti_obj.makeTextInfo(textInfos.POSITION_CARET)
-			except Exception:
-				return None
-			return getattr(caret_info, "focusableNVDAObjectAtStart", None) or getattr(
-				caret_info, "NVDAObjectAtStart", None
-			)
+			for position in (textInfos.POSITION_CARET, textInfos.POSITION_SELECTION):
+				try:
+					info = ti_obj.makeTextInfo(position)
+				except Exception:
+					continue
+				for candidate in (
+					getattr(info, "NVDAObjectAtStart", None),
+					getattr(info, "focusableNVDAObjectAtStart", None),
+				):
+					if candidate:
+						return candidate
+			return None
 
 		# Case 1: browse-mode event object is often a TreeInterceptor itself.
 		if hasattr(obj, "makeTextInfo"):
@@ -603,17 +749,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		doc_candidates = {c for c in candidates if "|doc:" in c}
 
 		for app_key, app_data in self._store.all_markers().items():
-			# --- document / app scoping check ---
-			is_doc_scoped = "|doc:" in app_key
-			if is_doc_scoped:
-				# Document-scoped marker: only fire when that exact document is open.
-				if app_key not in doc_candidates:
-					continue
-			else:
-				# App-scoped marker: fire when the app is in the foreground.
-				base = app_key.split("|doc:", 1)[0]
-				if app_key not in candidate_set and base not in base_candidates:
-					continue
+			if not self._app_key_matches_current_context(app_key, candidate_set, base_candidates, doc_candidates):
+				continue
 
 			# --- shortcut match ---
 			for sig_hash, marker_data in app_data.get("markers", {}).items():
@@ -723,10 +860,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		treeInterceptor = getattr(obj, "treeInterceptor", None)
 		if treeInterceptor and treeInterceptor.isReady and not treeInterceptor.passThrough:
 			try:
-				caretInfo = treeInterceptor.makeTextInfo(textInfos.POSITION_CARET)
-				caretObj = getattr(caretInfo, "focusableNVDAObjectAtStart", None) or getattr(
-					caretInfo, "NVDAObjectAtStart", None
-				)
+				caretObj = self._extract_caret_object(obj)
 				if caretObj:
 					obj = caretObj
 			except NotImplementedError:
@@ -737,29 +871,30 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._beginMarkingProcess(obj, "Navigator")
 
 	@script(
-		description="Opens the Remote Element Marker Manager for the current application.",
+		description="Opens the Remote Element Marker Manager for all saved markers.",
 		gesture="kb:NVDA+alt+shift+m",
 	)
 	def script_openMarkerManager(self, gesture):
-		candidates = self._get_app_key_candidates()
-		app_key = None
-		markers_dict = {}
-		for candidate in candidates:
-			md = self._store.get_markers(candidate)
-			if md:
-				app_key = candidate
-				markers_dict = md
-				break
-		if not markers_dict:
-			display = self._format_app_name(candidates[0]) if candidates else "this application"
-			ui.message(f"No markers saved for {display}.")
+		all_markers = {
+			app_key: app_data
+			for app_key, app_data in self._store.all_markers().items()
+			if app_data.get("markers")
+		}
+		if not all_markers:
+			ui.message("No markers saved.")
 			return
 
 		def run_manager_dialog():
 			nvda_gui.mainFrame.prePopup()
 			from .gui import MarkerManagerDialog
 
-			d = MarkerManagerDialog(nvda_gui.mainFrame, app_key, markers_dict, self._delete_marker_callback)
+			d = MarkerManagerDialog(
+				nvda_gui.mainFrame,
+				all_markers,
+				marker_instance=self,
+				delete_callback=self._delete_marker_callback,
+				edit_callback=self._edit_marker_callback,
+			)
 			d.ShowModal()
 			nvda_gui.mainFrame.postPopup()
 
@@ -826,6 +961,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			log.error(f"REM edit: marker not found app_key={app_key}, hash={sig_hash}")
 			return
 		normalized = normalize_shortcut(new_shortcut) if new_shortcut else ""
+		same_name_conflict = self._find_same_doc_label_conflict(new_name, app_key, sig_hash)
+		if same_name_conflict:
+			self._store.delete_marker(same_name_conflict["app_key"], same_name_conflict["sig_hash"])
 		marker["friendlyName"] = new_name
 		marker["shortcut"] = normalized
 		self._store.set_marker(app_key, sig_hash, marker)
@@ -856,33 +994,130 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		log.debugWarning(f"REM _get_browse_root: falling back to foreground={getattr(fg, 'appName', '?')}")
 		return fg
 
+	def _log_mark_capture_timing(self, start_time: float, source: str, signature: Optional[Dict[str, Any]] = None, **kwargs) -> None:
+		elapsed_ms = (time.perf_counter() - start_time) * 1000
+		backend = (signature or {}).get("backend", "Unknown")
+		extras = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+		log.debugWarning(
+			f"REM Timing: mark_capture source={source} backend={backend} took {elapsed_ms:.2f}ms"
+			f"{extras and ', ' + extras}"
+		)
+
 	def _beginMarkingProcess(self, obj, source):
-		app_key = self._get_app_key(obj)
-		signature = generate_signature(obj)
-		log.debugWarning(f"REM generated signature for {source} object: {signature}")
+		try:
+			canonical_obj = self._extract_caret_object(obj)
+			if canonical_obj:
+				obj = canonical_obj
+		except Exception:
+			pass
 
-		def run_dialog():
-			nvda_gui.mainFrame.prePopup()
-			default_name = getattr(obj, "name", "") or getattr(obj, "roleText", "") or "Element"
-			d = MarkerDialog(
-				nvda_gui.mainFrame,
-				default_name=default_name,
-				marker_instance=self,
-				app_key=app_key,
-				signature_hash=signature["hash"],
+		capture_start_time = time.perf_counter()
+		ui.message("Capturing element: please wait...")
+		self._start_progress_beeper()
+
+		def on_signature_ready(signature):
+			self._stop_progress_beeper()
+			if not signature:
+				self._log_mark_capture_timing(capture_start_time, source, success=False, emptySignature=True)
+				log.error(f"REM failed to capture {source} object: empty signature")
+				ui.message("Failed to capture element.")
+				if self._beep_enabled:
+					beep_failure()
+				return
+			primary = signature.get("primarySignature", {})
+			fast_path = signature.get("fastPathHints", {})
+			has_dom_hints = bool(fast_path.get("domHints"))
+			has_runtime_id = bool(fast_path.get("runtimeId"))
+			has_uia_identity = bool(
+				fast_path.get("automationId")
+				or fast_path.get("controlType")
+				or fast_path.get("className")
 			)
-			if d.ShowModal() == wx.ID_OK:
-				name = d.friendly_name
-				shortcut = d.shortcut
-				normalized = normalize_shortcut(shortcut) if shortcut else ""
-				self._save_new_marker(app_key, signature, name, normalized)
-				if normalized:
-					ui.message(f"Marker '{name}' saved with shortcut {normalized}.")
-				else:
-					ui.message(f"Marker '{name}' saved without a shortcut.")
-			nvda_gui.mainFrame.postPopup()
+			if (
+				signature.get("backend") == "BrowseMode"
+				and primary.get("role_index", -1) < 0
+				and primary.get("role_ordinal", -1) < 0
+				and not has_runtime_id
+				and not has_dom_hints
+				and not has_uia_identity
+			):
+				self._log_mark_capture_timing(
+					capture_start_time,
+					source,
+					signature,
+					success=False,
+					unresolvedBrowseModeIdentity=True,
+				)
+				log.warning(
+					f"REM failed to capture {source} object: BrowseMode identity unresolved, "
+					f"signature={signature}"
+				)
+				ui.message("Can not capture element.")
+				if self._beep_enabled:
+					beep_failure()
+				return
+			app_key = self._get_storage_app_key(obj, signature)
+			self._log_mark_capture_timing(
+				capture_start_time,
+				source,
+				signature,
+				success=True,
+				signatureHash=signature.get("hash", ""),
+			)
+			log.debugWarning(f"REM generated signature for {source} object: {signature}")
 
-		wx.CallAfter(run_dialog)
+			def run_dialog():
+				nvda_gui.mainFrame.prePopup()
+				default_name = getattr(obj, "name", "") or getattr(obj, "roleText", "") or "Element"
+				d = MarkerDialog(
+					nvda_gui.mainFrame,
+					default_name=default_name,
+					marker_instance=self,
+					app_key=app_key,
+					signature_hash=signature["hash"],
+				)
+				if d.ShowModal() == wx.ID_OK:
+					name = d.friendly_name
+					shortcut = d.shortcut
+					normalized = normalize_shortcut(shortcut) if shortcut else ""
+					replacement = getattr(d, "replace_existing_marker", None)
+					saved_ok = True
+					try:
+						if replacement:
+							self._replace_marker(
+								replacement["app_key"],
+								replacement["sig_hash"],
+								app_key,
+								signature,
+								name,
+								normalized,
+							)
+						else:
+							self._save_new_marker(app_key, signature, name, normalized)
+					except Exception:
+						saved_ok = False
+					if normalized:
+						ui.message(f"Marker '{name}' saved with shortcut {normalized}.")
+					else:
+						ui.message(f"Marker '{name}' saved without a shortcut.")
+					# Audio feedback: delayed so speech message plays first.
+					if self._beep_enabled:
+						if saved_ok:
+							wx.CallLater(200, beep_success)
+						else:
+							wx.CallLater(200, beep_failure)
+				nvda_gui.mainFrame.postPopup()
+
+			wx.CallAfter(run_dialog)
+		try:
+			generate_signature_async(obj, on_signature_ready)
+		except Exception as e:
+			self._stop_progress_beeper()
+			self._log_mark_capture_timing(capture_start_time, source, success=False, exception=type(e).__name__)
+			log.error(f"REM failed to capture {source} object: {e}")
+			ui.message("Failed to capture element.")
+			if self._beep_enabled:
+				beep_failure()
 
 	def _find_same_doc_shortcut_conflict(self, shortcut: str, app_key: str, sig_hash: str):
 		"""
@@ -916,6 +1151,28 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		"""Backward-compat wrapper — returns bool."""
 		return self._find_same_doc_shortcut_conflict(shortcut, app_key, sig_hash) is not None
 
+	def _find_same_doc_label_conflict(self, friendly_name: str, app_key: str, sig_hash: str):
+		"""
+		Look for another marker within the exact same document/app scope that
+		already uses the same friendly label.
+		"""
+		name_key = (friendly_name or "").strip().casefold()
+		if not name_key:
+			return None
+		app_data = self._store.all_markers().get(app_key, {})
+		for existing_hash, marker_data in app_data.get("markers", {}).items():
+			if existing_hash == sig_hash:
+				continue
+			existing_name = (marker_data.get("friendlyName", "") or "").strip()
+			if existing_name.casefold() != name_key:
+				continue
+			return {
+				"friendly_name": existing_name or "Unknown",
+				"app_key": app_key,
+				"sig_hash": existing_hash,
+			}
+		return None
+
 	def _clear_shortcut_from_marker(self, app_key: str, sig_hash: str) -> None:
 		"""Remove the shortcut from an existing marker without deleting it."""
 		marker = self._store.get_marker(app_key, sig_hash)
@@ -932,6 +1189,22 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		self._store.set_marker(app_key, sig_hash, signature)
 		self._save_store()
 		self._bind_saved_shortcuts()
+
+	def _replace_marker(
+		self,
+		old_app_key: str,
+		old_sig_hash: str,
+		new_app_key: str,
+		signature: Dict[str, Any],
+		name: str,
+		shortcut: str,
+	) -> None:
+		"""
+		Replace an existing marker entirely with a new marker definition.
+		Used when the user reuses a friendly label and chooses Replace.
+		"""
+		self._store.delete_marker(old_app_key, old_sig_hash)
+		self._save_new_marker(new_app_key, signature, name, shortcut)
 
 	def _invoke_marker(
 		self,
@@ -957,11 +1230,19 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		log.debugWarning(f"REM invoking marker. Candidates={candidates}, Target={app_key}")
 
 		if not ((app_key in candidates) or (base_target in base_candidates)):
+			if not self._is_legacy_unstable_doc_key(app_key):
+				log.warning(f"App key mismatch. Target base={base_target}, Candidates={base_candidates}")
+				ui.message("Element not found. Application context mismatch.")
+				return
+		if self._is_legacy_unstable_doc_key(app_key) and base_target not in base_candidates:
 			log.warning(f"App key mismatch. Target base={base_target}, Candidates={base_candidates}")
 			ui.message("Element not found. Application context mismatch.")
 			return
 
 		ui.message(f"Resolving {marker_data.get('friendlyName')}...")
+
+		# Start progress beeper — stopped in _activate_resolved_element.
+		self._start_progress_beeper()
 
 		# Determine the root object for tree traversal.
 		# For the shortcut path (pre_root=None): capture live now — browser is still active.
@@ -985,39 +1266,68 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		resolve_element(marker_data, resolve_root, on_resolve_done)
 
 	def _activate_resolved_element(self, obj: Optional[Any], marker_data: Dict[str, Any]):
+		# Always stop the progress beeper first, before any early return.
+		self._stop_progress_beeper()
+
 		if not obj:
 			ui.message("Element not found. Please re-mark the element.")
 			log.warning("Element resolution failed.")
+			if self._beep_enabled:
+				beep_failure()
+			return
+
+		if isinstance(obj, bool) or not hasattr(obj, "role"):
+			log.warning(
+				f"REM resolved invalid target object: type={type(obj).__name__!r}, value={obj!r}"
+			)
+			ui.message("Element found, but the resolved target is invalid. Please re-mark the element.")
+			if self._beep_enabled:
+				beep_failure()
 			return
 
 		try:
 			states = obj.states
 			if controlTypes.State.UNAVAILABLE in states or controlTypes.State.INVISIBLE in states:
 				ui.message("Element found but currently unavailable or invisible.")
+				if self._beep_enabled:
+					beep_failure()
 				return
 		except Exception:
 			pass
 
+		navigated = False
+		focused = False
+		action_performed = False
 		treeInterceptor = getattr(obj, "treeInterceptor", None)
 		if treeInterceptor and treeInterceptor.isReady and not treeInterceptor.passThrough:
 			try:
-				info = obj.makeTextInfo(textInfos.POSITION_FIRST)
-				treeInterceptor.selection = info
-				obj.scrollIntoView()
+				navigated = self._move_to_browse_mode_target(obj)
 				ui.message(f"Moved to {marker_data.get('friendlyName')}")
 			except Exception as e:
 				log.error(f"Failed to move virtual caret: {e}")
-				try:
-					obj.setFocus()
-				except Exception:
-					pass
+			if not self._activate_after_resolve:
+				focused = self._move_focus_to_target(obj, from_browse_mode=True)
+			elif not navigated:
+				focused = self._move_focus_to_target(obj, from_browse_mode=True)
 		else:
-			try:
-				obj.setFocus()
-			except Exception as e:
-				log.error(f"Failed to set focus: {e}")
+			focused = self._move_focus_to_target(obj)
 
-		try:
-			obj.doAction()
-		except Exception as e:
-			log.debugWarning(f"REM doAction not supported or failed: {e}")
+		if self._activate_after_resolve and (navigated or focused):
+			try:
+				obj.doAction()
+				action_performed = True
+			except Exception as e:
+				log.debugWarning(f"REM doAction not supported or failed: {e}")
+
+		resolved_ok = navigated or focused or action_performed
+		if not resolved_ok:
+			ui.message("Element found but could not be reached.")
+			if self._beep_enabled:
+				beep_failure()
+			return
+
+		if not self._activate_after_resolve and (navigated or focused):
+			log.debugWarning("REM activation skipped because activateAfterResolve is disabled.")
+
+		if self._beep_enabled:
+			beep_success()

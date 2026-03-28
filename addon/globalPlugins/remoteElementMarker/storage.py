@@ -6,6 +6,22 @@ import config  # type: ignore
 from logHandler import log  # type: ignore
 
 
+def is_stable_document_identifier(doc_id) -> bool:
+	text = str(doc_id or "").strip()
+	if not text:
+		return False
+	if "://" in text:
+		return True
+	return text.startswith((
+		"about:",
+		"file:",
+		"chrome:",
+		"edge:",
+		"moz-extension:",
+		"extension:",
+	))
+
+
 def get_document_identifier(obj) -> Optional[str]:
 	try:
 		ti = getattr(obj, "treeInterceptor", None)
@@ -49,7 +65,7 @@ class MarkerStore:
 		app_module = getattr(obj.appModule, "appModuleName", "unknown") if obj.appModule else "unknown"
 		parts = [app_name, app_module]
 		doc_id = get_document_identifier(obj)
-		if doc_id:
+		if doc_id and is_stable_document_identifier(doc_id):
 			parts.append(f"doc:{doc_id}")
 		return "|".join(parts)
 

@@ -1,6 +1,7 @@
 import wx  # type: ignore
 import gui  # type: ignore
 import inputCore  # type: ignore
+from urllib.parse import urlparse
 
 
 def _alert(message_text, title="Remote Element Marker"):
@@ -76,6 +77,7 @@ class MarkerDialog(wx.Dialog):
 		self.marker_instance = marker_instance
 		self.app_key = app_key
 		self.signature_hash = signature_hash
+		self.replace_existing_marker = None
 
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
 		sHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
@@ -132,10 +134,25 @@ class MarkerDialog(wx.Dialog):
 
 		self._stopCapture()
 		self.friendly_name = self.name_edit.Value.strip()
+		self.replace_existing_marker = None
 		if self._captured_raw_gid:
 			self.shortcut = self._captured_raw_gid.strip()
 		else:
 			self.shortcut = None
+
+		if self.marker_instance:
+			same_name_conflict = self.marker_instance._find_same_doc_label_conflict(
+				self.friendly_name, self.app_key, self.signature_hash
+			)
+			if same_name_conflict:
+				existing_name = same_name_conflict["friendly_name"]
+				msg = (
+					f"A marker named \"{existing_name}\" already exists on this page.\n\n"
+					f"Do you want to replace that marker with this one?"
+				)
+				if not self._show_conflict_dialog(msg):
+					return
+				self.replace_existing_marker = same_name_conflict
 
 		if self.shortcut:
 			from . import normalize_shortcut
@@ -254,10 +271,10 @@ class MarkerDialog(wx.Dialog):
 
 class MarkerManagerDialog(wx.Dialog):
 	"""
-	Dialog to list, manage, and delete existing markers for the active application.
+	Dialog to manage all saved markers using a category combobox and marker list.
 	"""
 
-	def __init__(self, parent, app_key, markers_dict, delete_callback):
+	def __init__(self, parent, all_markers, marker_instance=None, delete_callback=None, edit_callback=None):
 		wx.Dialog.__init__(
 			self,
 			parent,
@@ -265,57 +282,218 @@ class MarkerManagerDialog(wx.Dialog):
 			style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
 		)
 
-		self.app_key = app_key
-		self.markers_dict = markers_dict
+		self.all_markers = all_markers
+		self.marker_instance = marker_instance
 		self.delete_callback = delete_callback
-		self.marker_hashes = list(markers_dict.keys())
+		self.edit_callback = edit_callback
+		self._categories = []
+		self._current_items = []
 
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
 		sHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 
-		sHelper.addItem(wx.StaticText(self, label=f"Markers for application: {app_key.split('|')[0]}"))
+		sHelper.addItem(wx.StaticText(self, label="All saved markers by application/document:"))
+		self.category_choice = sHelper.addLabeledControl("&Category:", wx.Choice, choices=[])
+		self.Bind(wx.EVT_CHOICE, self.onCategoryChanged, self.category_choice)
 
-		choices = [
-				f"{m.get('friendlyName', 'Unknown')} [{self._formatGesture(m.get('shortcut', 'No Shortcut'))}]"
-				for m in markers_dict.values()
-		]
-		self.marker_list = sHelper.addLabeledControl("Saved &Markers:", wx.ListBox, choices=choices)
+		self.marker_list = sHelper.addLabeledControl("&Markers:", wx.ListBox, choices=[])
+		self.marker_list.SetMinSize((700, 300))
+		self.Bind(wx.EVT_LISTBOX, self.onMarkerSelectionChanged, self.marker_list)
+		self.Bind(wx.EVT_CHAR_HOOK, self.onCharHook)
 
-		if choices:
-			self.marker_list.SetSelection(0)
-
-		bHelper = sHelper.addDialogDismissButtons(self.CreateButtonSizer(wx.OK | wx.CANCEL))
+		self.edit_btn = wx.Button(self, label="&Edit Selected")
+		self.Bind(wx.EVT_BUTTON, self.onEdit, self.edit_btn)
 
 		self.delete_btn = wx.Button(self, label="&Delete Selected")
 		self.Bind(wx.EVT_BUTTON, self.onDelete, self.delete_btn)
-		bHelper.Insert(0, self.delete_btn)
+		self.close_btn = wx.Button(self, id=wx.ID_CLOSE, label="&Close")
+		self.Bind(wx.EVT_BUTTON, self.onOk, self.close_btn)
 
-		if not choices:
-			self.delete_btn.Disable()
+		btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+		btn_sizer.Add(self.edit_btn, flag=wx.RIGHT, border=gui.guiHelper.BORDER_FOR_DIALOGS)
+		btn_sizer.Add(self.delete_btn, flag=wx.RIGHT, border=gui.guiHelper.BORDER_FOR_DIALOGS)
+		btn_sizer.Add(self.close_btn)
+		sHelper.addItem(btn_sizer)
 
-		self.Bind(wx.EVT_BUTTON, self.onOk, id=wx.ID_OK)
+		self._populateCategories()
+		if self._categories:
+			self.category_choice.SetSelection(0)
+			self._loadCategoryMarkers(0)
+
+		self._updateActionButtons()
 
 		main_sizer.Add(sHelper.sizer, border=gui.guiHelper.BORDER_FOR_DIALOGS, flag=wx.ALL)
 		self.Sizer = main_sizer
 		main_sizer.Fit(self)
 		self.CentreOnScreen()
 
-	def onDelete(self, evt):
-		sel = self.marker_list.GetSelection()
-		if sel == wx.NOT_FOUND:
+	def _populateCategories(self):
+		self._categories = []
+		labels = []
+		for app_key in sorted(self.all_markers.keys(), key=self._formatCategoryLabel):
+			markers = self.all_markers.get(app_key, {}).get("markers", {})
+			if not markers:
+				continue
+			self._categories.append(app_key)
+			labels.append(self._formatCategoryLabel(app_key))
+		self.category_choice.SetItems(labels)
+
+	def _loadCategoryMarkers(self, category_index: int):
+		self._current_items = []
+		self.marker_list.Clear()
+		if category_index < 0 or category_index >= len(self._categories):
+			self._updateActionButtons()
+			return
+		app_key = self._categories[category_index]
+		markers = self.all_markers.get(app_key, {}).get("markers", {})
+		for sig_hash, marker_data in sorted(
+			markers.items(),
+			key=lambda item: (item[1].get("friendlyName", "") or "").casefold(),
+		):
+			self._current_items.append({
+				"app_key": app_key,
+				"sig_hash": sig_hash,
+				"marker_data": marker_data,
+			})
+			self.marker_list.Append(self._formatMarkerLabel(marker_data))
+		if self._current_items:
+			self.marker_list.SetSelection(0)
+		self._updateActionButtons()
+
+	def _formatCategoryLabel(self, app_key: str) -> str:
+		base = app_key.split("|doc:", 1)[0].split("|")[0]
+		base = base or "Unknown application"
+		if "|doc:" not in app_key:
+			return base
+		doc_part = app_key.split("|doc:", 1)[1].strip()
+		doc_label = self._formatDocumentLabel(doc_part)
+		return f"{base} - {doc_label}" if doc_label else base
+
+	def _formatDocumentLabel(self, doc_part: str) -> str:
+		if not doc_part:
+			return "Current page"
+		if "://" not in doc_part:
+			return doc_part
+		try:
+			parsed = urlparse(doc_part)
+		except Exception:
+			return doc_part
+		host = (parsed.netloc or "").strip()
+		path = (parsed.path or "").strip("/")
+		if not host:
+			return doc_part
+		if not path:
+			return host
+		segments = [segment for segment in path.split("/") if segment]
+		if not segments:
+			return host
+		last_segment = segments[-1].replace("-", " ").replace("_", " ").strip()
+		if not last_segment:
+			return host
+		return f"{host} / {last_segment}"
+
+	def _formatMarkerLabel(self, marker_data) -> str:
+		friendly = marker_data.get("friendlyName", "Unknown")
+		shortcut = marker_data.get("shortcut", "")
+		shortcut_display = self._formatGesture(shortcut) if shortcut else "No Shortcut"
+		return f"{friendly} [{shortcut_display}]"
+
+	def _getSelectedMarker(self):
+		index = self.marker_list.GetSelection()
+		if index == wx.NOT_FOUND or index >= len(self._current_items):
+			return None, None
+		selected = self._current_items[index]
+		app_key = selected["app_key"]
+		sig_hash = selected["sig_hash"]
+		marker_data = self.marker_instance._store.get_marker(app_key, sig_hash) if self.marker_instance else None
+		if not marker_data:
+			return index, None
+		selected["marker_data"] = marker_data
+		return index, selected
+
+	def _updateActionButtons(self):
+		_item, data = self._getSelectedMarker()
+		has_marker = data is not None
+		self.edit_btn.Enable(has_marker)
+		self.delete_btn.Enable(has_marker)
+
+	def onCategoryChanged(self, evt):
+		self._loadCategoryMarkers(self.category_choice.GetSelection())
+
+	def onMarkerSelectionChanged(self, evt):
+		self._updateActionButtons()
+		evt.Skip()
+
+	def onCharHook(self, evt):
+		focus = self.FindFocus()
+		if evt.GetKeyCode() == wx.WXK_TAB:
+			reverse = evt.ShiftDown()
+			if focus is self.marker_list:
+				target = self.close_btn if reverse else self.edit_btn
+				if target and target.IsEnabled():
+					target.SetFocus()
+					return
+			if focus is self.edit_btn:
+				target = self.marker_list if reverse else self.delete_btn
+				if target and (not hasattr(target, "IsEnabled") or target.IsEnabled()):
+					target.SetFocus()
+					return
+			if focus is self.delete_btn:
+				target = self.edit_btn if reverse else self.close_btn
+				if target and (not hasattr(target, "IsEnabled") or target.IsEnabled()):
+					target.SetFocus()
+					return
+			if focus is self.close_btn and reverse:
+				target = self.delete_btn if self.delete_btn.IsEnabled() else self.edit_btn
+				if target and target.IsEnabled():
+					target.SetFocus()
+					return
+		evt.Skip()
+
+	def onEdit(self, evt):
+		item, selected = self._getSelectedMarker()
+		if selected is None:
 			return
 
-		if _confirm("Are you sure you want to delete this marker?", "Confirm Deletion"):
-			hash_to_delete = self.marker_hashes[sel]
-			self.delete_callback(self.app_key, hash_to_delete)
+		app_key = selected["app_key"]
+		sig_hash = selected["sig_hash"]
+		marker_data = selected["marker_data"]
+		current_name = marker_data.get("friendlyName", "")
+		current_shortcut = marker_data.get("shortcut", "")
 
-			self.marker_list.Delete(sel)
-			self.marker_hashes.pop(sel)
+		d = MarkerDialog(
+			self,
+			default_name=current_name,
+			marker_instance=self.marker_instance,
+			app_key=app_key,
+			signature_hash=sig_hash,
+			existing_shortcut=current_shortcut,
+		)
+		if d.ShowModal() == wx.ID_OK and self.edit_callback:
+			new_name = d.friendly_name
+			new_shortcut = d.shortcut or ""
+			self.edit_callback(app_key, sig_hash, new_name, new_shortcut)
+			updated_marker = self.marker_instance._store.get_marker(app_key, sig_hash) if self.marker_instance else None
+			if updated_marker:
+				selected["marker_data"] = updated_marker
+				self._current_items[item]["marker_data"] = updated_marker
+				self.marker_list.SetString(item, self._formatMarkerLabel(updated_marker))
+		d.Destroy()
 
-			if self.marker_list.GetCount() > 0:
-				self.marker_list.SetSelection(min(sel, self.marker_list.GetCount() - 1))
-			else:
-				self.delete_btn.Disable()
+	def onDelete(self, evt):
+		item, selected = self._getSelectedMarker()
+		if selected is None:
+			return
+
+		label = selected["marker_data"].get("friendlyName", "Unknown")
+		if _confirm(f"Are you sure you want to delete the marker \"{label}\"?", "Confirm Deletion"):
+			if self.delete_callback:
+				self.delete_callback(selected["app_key"], selected["sig_hash"])
+			self.marker_list.Delete(item)
+			self._current_items.pop(item)
+			if self._current_items:
+				self.marker_list.SetSelection(min(item, len(self._current_items) - 1))
+			self._updateActionButtons()
 
 	def onOk(self, evt):
 		self.EndModal(wx.ID_OK)
