@@ -80,6 +80,7 @@ class ProgressBeeper:
 		if self._running:
 			return
 		self._running = True
+		_beep(_FREQ_PROGRESS, _DUR_PROGRESS)
 		self._schedule()
 
 	def stop(self) -> None:

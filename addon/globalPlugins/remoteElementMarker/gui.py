@@ -45,7 +45,6 @@ class ConflictDialog(wx.Dialog):
 	def __init__(self, parent, message_text, title="Gesture Conflict"):
 		wx.Dialog.__init__(self, parent, title=title)
 		main_sizer = wx.BoxSizer(wx.VERTICAL)
-		#border = gui.guiHelper.BORDER_FOR_DIALOGS
 		sHelper = gui.guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 
 		# Message
@@ -412,7 +411,7 @@ class MarkerManagerDialog(wx.Dialog):
 		return index, selected
 
 	def _updateActionButtons(self):
-		_item, data = self._getSelectedMarker()
+		_, data = self._getSelectedMarker()
 		has_marker = data is not None
 		self.edit_btn.Enable(has_marker)
 		self.delete_btn.Enable(has_marker)

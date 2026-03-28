@@ -780,20 +780,6 @@ def _compute_position_hints(obj, ti) -> Dict[str, Any]:
 		return {"role_index": -1, "role_ordinal": -1, "context_before": "", "context_after": ""}
 
 
-def _get_obj_offset(obj, ti) -> int:
-	"""Return char offset of obj within the document text, or -1."""
-	try:
-		import textInfos  # type: ignore
-
-		obj_info = obj.makeTextInfo(textInfos.POSITION_FIRST)
-		start_info = ti.makeTextInfo(textInfos.POSITION_FIRST)
-		range_info = start_info.copy()
-		range_info.setEndPoint(obj_info, "endToStart")
-		return len(range_info.getText())
-	except Exception:
-		return -1
-
-
 def _count_by_tree_order(obj, ti, target_role: int, target_name: str) -> Tuple[int, int]:
 	"""
 	Fallback: walk the full tree in document order and find the role_index and

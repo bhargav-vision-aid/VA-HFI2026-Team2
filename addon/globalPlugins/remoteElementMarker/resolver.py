@@ -16,40 +16,6 @@ _CHUNK_BUDGET_S = 0.008  # 8 ms per chunk — leaves ~8 ms headroom in a 16 ms f
 # timing, as a safety net against runaway loops on pathological trees.
 _CHUNK_MAX = 200
 
-# Roles that are pure structural containers in BrowseMode and can never be
-# the resolved target themselves. Their children still need visiting, but we
-# skip the match check on the node itself. These are NVDA controlTypes Role
-# integer values for the most common container roles.
-# We resolve them lazily the first time they are needed.
-_BROWSE_SKIP_ROLES: Optional[frozenset] = None
-
-
-def _get_browse_skip_roles() -> frozenset:
-	global _BROWSE_SKIP_ROLES
-	if _BROWSE_SKIP_ROLES is not None:
-		return _BROWSE_SKIP_ROLES
-	try:
-		import controlTypes  # type: ignore
-		R = controlTypes.Role
-		_BROWSE_SKIP_ROLES = frozenset({
-			R.DOCUMENT,
-			R.FRAME,
-			R.INTERNALFRAME,
-			R.SECTION,
-			R.DIVISION,
-			R.GROUPING,
-			R.FORM,
-			R.PARAGRAPH,
-			R.BLOCKQUOTE,
-			R.SEPARATOR,
-			R.WHITESPACE,
-			R.STATICTEXT,
-		})
-	except Exception:
-		_BROWSE_SKIP_ROLES = frozenset()
-	return _BROWSE_SKIP_ROLES
-
-
 def _log_timing(method: str, elapsed_ms: float, **kwargs) -> None:
 	if not _TIMING_ENABLED:
 		return

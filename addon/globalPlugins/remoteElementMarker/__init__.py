@@ -1,15 +1,12 @@
 # -*- coding: UTF-8 -*-
 # Remote Element Marker
-# Copyright (C) 2026 Team 2
-# Released under GPL 2
 
 from typing import Dict, Any, Optional, List
 import time
 
 
 import globalPluginHandler  # type: ignore
-
-# import addonHandler  # type: ignore
+import addonHandler  # type: ignore
 import api  # type: ignore
 import config  # type: ignore
 from scriptHandler import script  # type: ignore
@@ -26,14 +23,13 @@ import textInfos  # type: ignore
 
 from .gui import MarkerDialog
 from .storage import MarkerStore, is_stable_document_identifier
-from .signature import generate_signature, generate_signature_for_lookup, generate_signature_async
+from .signature import generate_signature_for_lookup, generate_signature_async
 from .resolver import resolve_element
 from .bindings import normalize_shortcut
 from .settings import RemoteElementMarkerSettingsPanel
 from .beep import beep_success, beep_failure, ProgressBeeper
 
-# addonHandler.initTranslation()
-
+addonHandler.initTranslation()
 
 def _shortcut_to_script_suffix(shortcut: str) -> str:
 	"""
@@ -109,7 +105,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		# We register one dispatcher script per shortcut, not one per marker.
 		unique_shortcuts = set()
 		for app_key, app_data in self._store.all_markers().items():
-			for sig_hash, marker_data in app_data.get("markers", {}).items():
+			for marker_data in app_data.get("markers", {}).values():
 				shortcut = normalize_shortcut(marker_data.get("shortcut", ""))
 				if shortcut:
 					unique_shortcuts.add(shortcut)
@@ -1004,13 +1000,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 		)
 
 	def _beginMarkingProcess(self, obj, source):
-		try:
-			canonical_obj = self._extract_caret_object(obj)
-			if canonical_obj:
-				obj = canonical_obj
-		except Exception:
-			pass
-
 		capture_start_time = time.perf_counter()
 		ui.message("Capturing element: please wait...")
 		self._start_progress_beeper()
