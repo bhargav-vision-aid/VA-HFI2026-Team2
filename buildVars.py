@@ -34,7 +34,7 @@ This is especially useful in remote assistance scenarios (Teams - Remote Control
 - Marker manager for current app (NVDA+Alt+Shift+M)
 - Toggle label announcements on/off (NVDA+Alt+A)"""),
 	# Author(s)
-	addon_author=" Vignesh Devendran <vigneshdevendran7@gmail.com>, Abhishek Raut <raut.abhishek@zohomail.in>, Lakshmanan A <lakshmanan6333@gmail.com>",
+	addon_author="Vignesh Devendran <vigneshdevendran7@gmail.com>, Abhishek Raut <raut.abhishek@zohomail.in>, Lakshmanan A <lakshmanan6333@gmail.com>",
 	# URL for the add-on documentation support
 	addon_url="https://github.com/bhargav-vision-aid/VA-HFI2026-Team2",
 	# URL for the add-on repository where the source code can be found
