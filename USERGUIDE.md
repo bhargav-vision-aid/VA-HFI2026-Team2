@@ -1,188 +1,108 @@
 # Remote Element Marker — User Guide
-
-Version 1.0.0 | Compatible with NVDA 2023.1 and later | Windows 10 (1809) and later
-
----
-
-## Overview
-
-Remote Element Marker is an NVDA add-on that lets you assign a **friendly name** and an optional **keyboard shortcut** to any UI element in any application or web page. Once marked, you can jump directly to that element at any time by pressing its shortcut, or by selecting it from a list.
-
-This is especially useful in remote assistance scenarios (Teams - Remote Control, TeamViewer, AnyDesk, etc.) where a sighted helper can position the mouse over an important but unlabeled element, and the NVDA user can then mark it permanently so they can access it independently in future sessions.
+**Version:** 1.0.0  
+**Compatibility:** NVDA 2023.1+ | Windows 10 (1809) and later  
+**Created by:** Team 2 - Optimistic Minds for the Vision-Aid "Hack for Inclusion" 2026.
 
 ---
 
-## Who Is This For?
+## ## Overview
+**Remote Element Marker** is an NVDA add-on designed to enhance accessibility in complex software and web environments. It allows you to assign a **Friendly Name** and an optional **Keyboard Shortcut** to any UI element. 
 
-**Visually impaired (VI) users** — navigate to an element using NVDA's object navigation or the virtual caret, then press a shortcut to mark and label it.
-
-**Sighted users assisting remotely** — move the mouse and hover over any element on the VI user's screen, then ask the VI user to press the "Mark element under mouse pointer" shortcut. The element is captured at the mouse position without clicking it.
+This tool is highly effective for:
+* **Independent Navigation:** Jump directly to specific buttons or fields without manual searching.
+* **Remote Assistance:** A sighted helper (via Teams, TeamViewer, or AnyDesk) can hover the mouse over an unlabeled element, allowing the VI user to "mark" and label it for future independent use.
 
 ---
 
-## Keyboard Shortcuts
+## ## Target Audience
+* **Visually Impaired (VI) Users:** Use object navigation or the browse / focus mode to mark and label elements for streamlined workflows.
+* **Sighted Assistants:** Help VI users by positioning the mouse over specific UI components. The VI user can then capture the element at that exact coordinate without needing to click it.
 
-All shortcuts can be customized in NVDA's Input Gestures dialog under the **Remote Element Marker** category.
+---
+
+## ## Keyboard Shortcuts
+All gestures can be customized in the NVDA **Input Gestures** dialog under the **Remote Element Marker** category.
 
 | Action | Default Shortcut |
-|---|---|
-| Mark element under mouse pointer | `NVDA+Alt+N` |
-| Mark element at navigator / virtual caret | `NVDA+Alt+B` |
-| Open marker list (activate, edit, delete) | `NVDA+Alt+L` |
-| Open marker manager for current app | `NVDA+Alt+Shift+M` |
-| Toggle label announcements on/off | `NVDA+Alt+A` |
+| :--- | :--- |
+| **Mark element under mouse pointer** | `NVDA+Alt+N` |
+| **Mark element at navigator / virtual caret** | `NVDA+Alt+B` |
+| **Open Marker List** (Activate, Edit, Delete) | `NVDA+Alt+L` |
+| **Open Marker Manager** (All Applications) | `NVDA+Alt+Shift+M` |
+| **Toggle Label Announcements** | `NVDA+Alt+A` |
 
 ---
 
-## Marking an Element
+## ## Marking an Element
 
-### Method 1 — From the Navigator (keyboard-only, recommended for VI users)
-
-1. Navigate to the element using NVDA's object navigation (`NVDA+numpad` arrows) or browse-mode arrow keys in a browser.
+### Method 1: Using the Navigator (Recommended for VI Users)
+1. Focus on the element using NVDA object navigation (`NVDA+Numpad Arrows`) or Browse / focus Mode.
 2. Press **`NVDA+Alt+B`**.
-3. The **Add Remote Element Marker** dialog opens.
+3. The **Add Remote Element Marker** dialog will open.
 
-### Method 2 — From the Mouse (for remote desktop session/sighted assistance)
-
-1. The sighted user moves the active mouse pointer and hovers over the target element — do **not** click it.
+### Method 2: Using the Mouse (Recommended for Remote Support)
+1. Have the sighted assistant hover the mouse over the target element (do **not** click).
 2. The VI user presses **`NVDA+Alt+N`**.
-3. The **Add Remote Element Marker** dialog opens with the element under the mouse captured.
+3. The dialog opens, capturing the element currently under the mouse pointer.
 
-### The Add Remote Element Marker Dialog
-
-The dialog contains:
-
-- **Friendly Name** — a text field pre-filled with the element's existing accessible name (if any). Type a meaningful label such as "Submit Order" or "Subtract Button". This name will be spoken when you navigate to or activate the element.
-- **Capture Gesture button** — press this to record a keyboard shortcut. After pressing it, perform the desired gesture (e.g. `NVDA+Alt+1`). The captured gesture appears in the read-only **Shortcut captured** field. A shortcut is optional — you can leave it blank and use the marker list instead.
-- **OK / Cancel** — press OK to save the marker, Cancel to discard.
-
-#### Gesture Conflict Handling
-
-If the captured gesture is already assigned to another NVDA command, a **Gesture Conflict** dialog appears showing what it conflicts with and offering **Replace** or **Cancel**. Choosing Replace allows the marker shortcut to shadow the existing assignment.
-
-If the gesture is already assigned to another marker on the same page, you are also asked whether to replace that assignment.
+### The "Add Remote Element Marker" Dialog
+* **Friendly Name:** Enter a descriptive label (e.g., "Checkout Button"). This name is spoken when navigating to or activating the element.
+* **Capture Gesture:** Press this button, then perform the desired keyboard shortcut (e.g., `NVDA+Alt+1`). This is optional.
+* **Conflict Handling:** If a shortcut is already in use, NVDA will prompt you to **Replace** or **Cancel**.
 
 ---
 
-## Activating a Marker
+## ## Activating and Managing Markers
 
-### Using the assigned shortcut
+### How to Activate a Marker
+* **Via Shortcut:** Press your assigned shortcut. NVDA will announce "Resolving [Name]..." and move focus to the element.
+* **Via Marker List:** Press **`NVDA+Alt+L`** to see all markers for the current app. Use arrow keys to select one and press **Enter** to activate.
 
-Press the shortcut you assigned when marking the element. NVDA will say "Resolving [name]…" then navigate to and activate the element. If the element cannot be found (e.g. the page has changed), NVDA will say "Element not found. Please re-mark the element."
-
-### Using the Marker List
-
-1. Press **`NVDA+Alt+L`** while the target application or web page is open and in the foreground.
-2. The **Activate Remote Element Marker** dialog opens, showing all markers saved for the current application or page.
-3. Use the arrow keys to select a marker.
-4. Press **Activate** (or Enter) to navigate to and activate the selected element.
-
-The marker list also contains **Edit** and **Delete** buttons (see below).
+### Marker Manager (Global View)
+Press **`NVDA+Alt+Shift+M`** to manage markers across all applications:
+1. Use the **Combo Box** to select a specific application.
+2. Use **Tab** to navigate between the list of markers and the **Edit/Delete** buttons.
+3. Click **Close** when finished.
 
 ---
 
-## Managing Markers
+## ## Customization & Settings
+To access advanced settings, go to **NVDA Menu → Preferences → Settings → Remote Element Marker**.
 
-### Editing a Marker (from the Marker List)
+### Label Announcements
+- Setting: "Announce custom labels when navigating elements"
+- Default: Not checked
+- Behavior: NVDA will announce the assigned "Friendly Name" automatically while navigating elements when enabled.
 
-1. Open the marker list with **`NVDA+Alt+L`**.
-2. Select the marker you want to change.
-3. Press **Edit**.
-4. The **Add Remote Element Marker** dialog reopens, pre-filled with the current name and shortcut.
-5. Change the name and/or re-capture a gesture, then press OK.
+### Beep Feedback
+- Setting: "Play audio beeps for save and resolve feedback"
+- Default: Enabled
+- Behavior:
+  - Enabled: Plays a progress beep during capturing/resolving and a completion beep after the process ends.
+  - Disabled: No audio feedback is played during or after capturing/resolving.
 
-### Deleting a Marker (from the Marker List)
-
-1. Open the marker list with **`NVDA+Alt+L`**.
-2. Select the marker you want to remove.
-3. Press **Delete**.
-4. Confirm deletion when prompted.
-
-### Marker Manager
-
-Press **`NVDA+Alt+Shift+M`** to open the **Manage Remote Element Markers** dialog. This shows all markers saved for the current application and allows you to delete individual markers. Use this when the target application is open but you do not need to activate any marker right now.
-
----
-
-## Label Announcement
-
-When label announcement is enabled, NVDA automatically reads your custom friendly name whenever you navigate to a marked element — even without pressing any shortcut.
-
-### Toggling Announcements
-
-- Press **`NVDA+Alt+A`** to toggle on or off. NVDA will say "Remote Element Marker on" or "Remote Element Marker off".
-- Alternatively, go to **NVDA Menu → Preferences → Settings → Remote Element Marker** and check or uncheck **"Announce custom labels when navigating elements"**, then press OK.
-
-### How It Works
-
-When enabled, NVDA monitors focus, navigator, and caret events. Whenever a marked element is encountered during navigation, NVDA queues its friendly name for speech after the normal navigation announcement. The same label will not be repeated within 0.35 seconds to avoid double-speaking.
+### Activation Behavior
+* **Setting:** "Activate element after resolving to it."
+* **Enabled (Default):** Moving to a marker automatically "clicks" or triggers it.
+* **Disabled:** NVDA will move your focus/navigator to the element but will **not** execute it.
 
 ---
 
-## How Markers Are Stored
-
-Markers are saved permanently to a JSON file at:
-
-```
-%AppData%\Roaming\nvda\remoteElementMarkers.json
-```
-
-Markers are scoped per application and per page:
-
-- **Web pages** — markers are tied to the exact URL of the page. A marker on one page will not appear or activate when a different page is open.
-- **Native applications** — markers are tied to the application name and module.
-
-Markers persist across NVDA restarts. They are not affected by closing or reopening the application.
+## ## Technical Details
+* **Storage:** Markers are saved in `%AppData%\nvda\remoteElementMarkers.json`.
+* **Scope:** Markers are context-sensitive. A shortcut for a specific URL will not conflict with the same shortcut on a different website.
+* **Unlabeled Elements:** The add-on uses roles, position indices, and surrounding text to identify elements even if they lack an official accessible name.
 
 ---
 
-## Important Notes
+## ## Troubleshooting
 
-### Re-marking After Page Changes
-
-Markers use a combination of element role, accessible name, position index, and surrounding text context to identify elements. If a page is redesigned and the structure around a marked element changes significantly, the marker may no longer find the correct element. In that case, delete the old marker and re-mark the element.
-
-### Unlabeled Elements
-
-Elements with no accessible name (e.g. icon-only buttons) are fully supported. The add-on uses screen coordinates at mark time and document position to distinguish between multiple identical-looking elements on the same page.
-
-### Shortcut Scope
-
-A shortcut assigned to a marker only fires when the application or web page that contains that marker is in the foreground. The same keyboard gesture can be assigned to different elements on different pages without conflict — the correct one is selected automatically based on which page is currently active.
+| Issue | Solution |
+| :--- | :--- |
+| **Activates wrong element** | The UI layout may have changed. Delete the marker and re-mark it. |
+| **"Element not found"** | The page structure has significantly changed. Re-marking is required. |
+| **"Shortcut has no marker"** | You are likely in the wrong application or on the wrong web page for that shortcut. |
+| **NVDA feels slow** | Disable "Label Announcements" (`NVDA+Alt+A`) on extremely large documents. |
 
 ---
-
-## Compatibility
-
-- NVDA 2023.1 and later
-- Windows 10 (version 1809) and later
-- Web browsers: Chrome, Firefox, Edge (Chromium), and other browsers supported by NVDA's browse mode
-- Native Windows applications using UIA, IAccessible, or NVDA browse mode
-
----
-
-## Troubleshooting
-
-**The marker activates the wrong element.**
-Delete the marker and re-mark the element. Make sure NVDA's virtual caret or navigator is precisely on the target element when marking.
-
-**"Element not found. Please re-mark the element."**
-The page structure has changed since the marker was saved. Delete and re-create the marker.
-
-**"Element found but currently unavailable or invisible."**
-The element exists but is disabled or hidden. Wait for it to become available.
-
-**"This shortcut has no marker for the current document."**
-The shortcut is registered but the page that owns it is not currently open. Navigate to the correct page first.
-
-**"Application context mismatch."**
-The marker belongs to a different application than what is currently in the foreground. Switch to the correct application.
-
-**Announcing labels causes NVDA to feel slow on large pages.**
-This is normal on very large documents. The add-on is optimized to be lightweight on navigation events. If sluggishness persists, toggle announcements off with `NVDA+Alt+A`.
-
----
-
-## Copyright and License
-
-Copyright © 2026 Team 2 - Optimistic Minds. Released under the GNU General Public License version 2.
+*Copyright © 2026 Team 2 - Optimistic Minds  for the Vision-Aid "Hack for Inclusion" 2026. Released under the GNU General Public License version 2.*

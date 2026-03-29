@@ -34,7 +34,7 @@ This is especially useful in remote assistance scenarios (Teams - Remote Control
 - Marker manager for current app (NVDA+Alt+Shift+M)
 - Toggle label announcements on/off (NVDA+Alt+A)"""),
 	# Author(s)
-	addon_author="Abhishek Raut <raut.abhishek@zohomail.in>, Vignesh Devendran <vigneshdevendran7@gmail.com>, Lakshmanan A <lakshmanan6333@gmail.com>",
+	addon_author="Vignesh Devendran <vigneshdevendran7@gmail.com>, Abhishek Raut <raut.abhishek@zohomail.in>, Lakshmanan A <lakshmanan6333@gmail.com>",
 	# URL for the add-on documentation support
 	addon_url="https://github.com/bhargav-vision-aid/VA-HFI2026-Team2",
 	# URL for the add-on repository where the source code can be found
@@ -42,9 +42,9 @@ This is especially useful in remote assistance scenarios (Teams - Remote Control
 	# Documentation file name
 	addon_docFileName="readme.html",
 	# Minimum NVDA version supported (e.g. "2019.3.0", minor version is optional)
-	addon_minimumNVDAVersion="2026.1",
+	addon_minimumNVDAVersion="2023.1",
 	# Last NVDA version supported/tested (e.g. "2024.4.0", ideally more recent than minimum version)
-	addon_lastTestedNVDAVersion="2026.1",
+	addon_lastTestedNVDAVersion="2025.3.3",
 	# Add-on update channel (default is None, denoting stable releases,
 	# and for development releases, use "dev".)
 	# Do not change unless you know what you are doing!
@@ -65,6 +65,7 @@ This is especially useful in remote assistance scenarios (Teams - Remote Control
 # https://scons.org/doc/production/HTML/scons-user/apd.html
 pythonSources: list[str] = [
 	"addon/globalPlugins/remoteElementMarker/__init__.py",
+	"addon/globalPlugins/remoteElementMarker/beep.py",
 	"addon/globalPlugins/remoteElementMarker/bindings.py",
 	"addon/globalPlugins/remoteElementMarker/gui.py",
 	"addon/globalPlugins/remoteElementMarker/resolver.py",
