@@ -42,7 +42,7 @@ All gestures can be customized via **NVDA Menu → Preferences → Input Gesture
 ### Detailed Documentation & Demos
 
   * **User Guide:** For a full walkthrough on Method 1 vs. Method 2, visit our **[User Guide](https://github.com/bhargav-vision-aid/VA-HFI2026-Team2/blob/main/USERGUIDE.md)**.
-  * **Video Demos:** Check out our **[Demos folder](https://github.com/bhargav-vision-aid/VA-HFI2026-Team2/tree/main/demo)** to see the add-on in action within different applications and remote support scenarios.
+  * **Video Demos:** Download our **[Demo Video - Zip file](https://github.com/bhargav-vision-aid/VA-HFI2026-Team2/releases/download/v1.0.0/demo.zip)** to see the add-on in action within different applications and remote support scenarios.
 
 -----
 
