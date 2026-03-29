@@ -5,7 +5,7 @@
 
 ---
 
-## ## Overview
+## Overview
 **Remote Element Marker** is an NVDA add-on designed to enhance accessibility in complex software and web environments. It allows you to assign a **Friendly Name** and an optional **Keyboard Shortcut** to any UI element. 
 
 This tool is highly effective for:
@@ -14,13 +14,13 @@ This tool is highly effective for:
 
 ---
 
-## ## Target Audience
+## Target Audience
 * **Visually Impaired (VI) Users:** Use object navigation or the browse / focus mode to mark and label elements for streamlined workflows.
 * **Sighted Assistants:** Help VI users by positioning the mouse over specific UI components. The VI user can then capture the element at that exact coordinate without needing to click it.
 
 ---
 
-## ## Keyboard Shortcuts
+## Keyboard Shortcuts
 All gestures can be customized in the NVDA **Input Gestures** dialog under the **Remote Element Marker** category.
 
 | Action | Default Shortcut |
@@ -33,7 +33,7 @@ All gestures can be customized in the NVDA **Input Gestures** dialog under the *
 
 ---
 
-## ## Marking an Element
+## Marking an Element
 
 ### Method 1: Using the Navigator (Recommended for VI Users)
 1. Focus on the element using NVDA object navigation (`NVDA+Numpad Arrows`) or Browse / focus Mode.
@@ -52,7 +52,7 @@ All gestures can be customized in the NVDA **Input Gestures** dialog under the *
 
 ---
 
-## ## Activating and Managing Markers
+## Activating and Managing Markers
 
 ### How to Activate a Marker
 * **Via Shortcut:** Press your assigned shortcut. NVDA will announce "Resolving [Name]..." and move focus to the element.
@@ -66,7 +66,7 @@ Press **`NVDA+Alt+Shift+M`** to manage markers across all applications:
 
 ---
 
-## ## Customization & Settings
+## Customization & Settings
 To access advanced settings, go to **NVDA Menu → Preferences → Settings → Remote Element Marker**.
 
 ### Label Announcements
@@ -88,14 +88,14 @@ To access advanced settings, go to **NVDA Menu → Preferences → Settings → 
 
 ---
 
-## ## Technical Details
+## Technical Details
 * **Storage:** Markers are saved in `%AppData%\nvda\remoteElementMarkers.json`.
 * **Scope:** Markers are context-sensitive. A shortcut for a specific URL will not conflict with the same shortcut on a different website.
 * **Unlabeled Elements:** The add-on uses roles, position indices, and surrounding text to identify elements even if they lack an official accessible name.
 
 ---
 
-## ## Troubleshooting
+## Troubleshooting
 
 | Issue | Solution |
 | :--- | :--- |
