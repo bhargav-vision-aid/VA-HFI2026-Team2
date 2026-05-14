@@ -12,8 +12,7 @@
 | **Platform** | NVDA (NonVisual Desktop Access) |
 | **Duration** | 44 days |
 | **Total Commits** | 42 |
-| **Contributors** | 2 |
-| **Testers** | 3 |
+| **Contributors** | 4 |
 | **Start Date** | February 14, 2026 |
 | **End Date** | March 29, 2026 |
 
