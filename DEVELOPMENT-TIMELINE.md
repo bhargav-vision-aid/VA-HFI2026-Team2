@@ -641,16 +641,14 @@ remoteElementMarker/
 
 | Name | Contributions |
 |------|---------------|
-| **Vignesh Devendran** | Template setup, bug fixes, performance optimisation, documentation |
+| **Vignesh Devendran** | Template setup, planning, performance optimisation, documentation |
 | **Abhishek Raut** | Core development, bug fixes, performance optimisation, deployment |
-
-
-
-## Testers
-| Name | Contributions |
-|------|---------------|
 | **Lakshmanan A** | Ideation, Manual Testing |
 | **Nagulan M** | Manual Testing |
+
+## Special Mention
+| Name | Thanks for |
+|------|------------|
 | **Sai Krushna** | Pilot Testing v1.0.0 |
 
 ---
